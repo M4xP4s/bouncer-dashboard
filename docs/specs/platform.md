@@ -32,8 +32,10 @@ and the error response. Items are cited as [the requirements][req] name them:
    refused, and a refused call changes nothing. (Core feature 1, 3;
    Expectation: security)
 5. **The API does not listen until Redis has answered**; otherwise it exits,
-   naming the host and not the URL. On SIGTERM it waits at most 1 s for the
-   replies it is owed, then closes. (Expectation: reliability)
+   naming the host and not the URL: at once when nothing listens, within
+   about 3 s when the peer accepts the connection and never answers. On
+   SIGTERM it waits at most 1 s for the replies it is owed, then closes.
+   (Expectation: reliability)
 6. **Every error body is `ApiError`.** An exception keeps its status, message
    and extra fields, such as a 429's retry time; any other error is a 500
    "Internal server error" whose cause is logged, not sent. (Backend 6;
@@ -71,11 +73,14 @@ classification of errors. Cases: the filter spec; the 404 step.
 
 **One Redis client fails fast at start, then retries.** The API is useless
 without Redis but should survive its restart. The client connects while the
-application is built (1 s timeout). Before its first success the reconnect
-strategy returns the error, so start-up fails; afterwards it retries every
-500 ms. Alternative: the defaults, which treat a socket timeout as final and
-left a transaction waiting indefinitely on a stopped or paused Redis. Cost:
-this alone bounds no wait. Cases: the milestone.
+application is built, with 1 s for the TCP connection. A socket silent for
+3 s is closed, which covers a peer that accepts and never answers; a `PING`
+every second keeps a healthy idle connection from looking silent. Before its
+first success the reconnect strategy returns the error, so start-up fails;
+afterwards it retries every 500 ms. Alternative: the defaults, which wait
+without limit on a silent peer and treat a socket timeout as final. Cost: a
+Redis that hangs under traffic is not noticed, because every command written
+restarts the timer. Cases: the Redis module spec; the milestone.
 
 ## Test plan
 
@@ -85,8 +90,11 @@ Unit, no Redis (`npm test`):
   problems come in one error, with no credential in it.
 - `apps/api/src/auth/user-token.guard.spec.ts`: the token's ID is set; a bad
   header, an unknown token and the admin token are 401; a sent ID is ignored.
-- `apps/api/src/api-error.filter.spec.ts`: status and message are kept; a
-  list of messages becomes one; a hidden middleware detail is withheld.
+- `apps/api/src/api-error.filter.spec.ts`: status, message and extra fields
+  are kept; a list of messages becomes one; a hidden middleware detail is
+  withheld; any other error is a logged 500; a reply already begun is left.
+- `apps/api/src/redis/redis.module.spec.ts` (TCP only, no Redis): start-up
+  fails on a closed port, and on a peer that accepts and never answers.
 
 Gap: rule 4 has no case yet. The code that enforces it, the socket handshake
 and the admin routes, does not exist; its cases are added with that code.
