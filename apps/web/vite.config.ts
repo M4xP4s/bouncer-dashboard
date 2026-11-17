@@ -8,8 +8,8 @@ export default defineConfig({
   server: {
     // Development only. The browser talks to Vite's origin and Vite forwards
     // API and socket traffic to the API on port 3000, so the dashboard uses
-    // the same relative URLs as in the demo, where the API serves it, and
-    // there is no CORS configuration in either mode.
+    // the same relative URLs as the built page, which the API serves itself,
+    // and there is no CORS configuration in either mode.
     proxy: {
       '/api': 'http://localhost:3000',
       '/socket.io': { target: 'http://localhost:3000', ws: true },

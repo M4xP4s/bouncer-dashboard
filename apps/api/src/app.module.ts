@@ -1,10 +1,13 @@
+import { join } from 'node:path';
 import { Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
+import { ServeStaticModule } from '@nestjs/serve-static';
 import { AdminController, SeededUserPipe } from './admin/admin.controller.js';
 import { AdminTokenGuard } from './auth/admin-token.guard.js';
 import { ApiErrorFilter } from './api-error.filter.js';
 import { UserTokenGuard } from './auth/user-token.guard.js';
 import { ConfigModule } from './config/config.module.js';
+import { API_PREFIX } from './configure-app.js';
 import { HealthController } from './health/health.controller.js';
 import { LiveGateway } from './live/live.gateway.js';
 import { RateLimitInterceptor } from './rate-limit/rate-limit.interceptor.js';
@@ -13,7 +16,17 @@ import { RedisModule } from './redis/redis.module.js';
 import { SampleController } from './sample/sample.controller.js';
 
 @Module({
-  imports: [ConfigModule, RedisModule],
+  imports: [
+    ConfigModule,
+    RedisModule,
+    // The built dashboard, two levels up from apps/api/src (tests) or
+    // apps/api/dist. In development Vite serves the page and it may not exist.
+    ServeStaticModule.forRoot({
+      rootPath: join(import.meta.dirname, '..', '..', 'web', 'dist'),
+      // An unknown API path must be a JSON 404, not the page with a 200.
+      exclude: [`/${API_PREFIX}/{*path}`, '/socket.io/{*path}'],
+    }),
+  ],
   controllers: [HealthController, SampleController, AdminController],
   providers: [
     { provide: APP_FILTER, useClass: ApiErrorFilter },
