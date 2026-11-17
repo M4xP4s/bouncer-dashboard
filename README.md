@@ -1,3 +1,5 @@
+![bouncer-dashboard — illustrated bouncer filtering requests beside a monitoring dashboard](docs/images/bouncer-banner.jpeg)
+
 # bouncer-dashboard
 
 A per-user API rate limiter built as a NestJS interceptor, with a live React and TypeScript dashboard for administering it. Shared quota state lives in Redis so several API processes enforce one limit; changes reach the dashboard over WebSockets.
