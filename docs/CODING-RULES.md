@@ -86,6 +86,9 @@ const token = bearerToken(request.headers.authorization) ?? '';
 const userId = this.config.userIdByToken.get(token);
 ```
 
+S4 also preserves the interceptor's nonempty `userId` check: the request
+type cannot guarantee that the route installed its authentication guard.
+
 ## Names and values
 
 | ID | Rule |
@@ -104,7 +107,7 @@ const userId = this.config.userIdByToken.get(token);
 
 | ID | Rule |
 | --- | --- |
-| TS1 | Validate external input at its owning boundary, including HTTP, WebSocket, configuration and decoded store data. An annotation, assertion or generic parameter is not runtime validation; do not repeat the same checks downstream (S4). |
+| TS1 | Validate untrusted input at its owning boundary: HTTP, WebSocket and configuration. A store reply may be asserted to its command's documented return type. A stored payload from trusted application writers may be asserted to the shape this application writes while the stored schema stays compatible, with a comment naming that invariant; otherwise validate or migrate it at the boundary. An annotation, assertion or generic parameter is not runtime validation; do not repeat established checks downstream (S4). |
 | TS2 | Prefer `unknown` to `any` for untrusted values and narrow before use. Do not use type assertions or non-null assertions merely to silence an error. |
 | TS3 | Use a discriminated union when independent optional fields would allow invalid combinations of mutually exclusive states. |
 
@@ -125,10 +128,12 @@ and [P21](PITFALLS.md#p21-removing-another-components-listeners) illustrates A4.
 [Node.js explains the event-loop cost](https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop)
 behind A3.
 
-Use the existing Oxlint toolchain for automated promise checks:
+The API lint run enforces
 [`no-floating-promises`](https://oxc.rs/docs/guide/usage/linter/rules/typescript/no-floating-promises.html)
-and [`no-misused-promises`](https://oxc.rs/docs/guide/usage/linter/rules/typescript/no-misused-promises.html).
-The API already enables the former with type-aware linting. Its default
+with type-aware linting.
+[`no-misused-promises`](https://oxc.rs/docs/guide/usage/linter/rules/typescript/no-misused-promises.html)
+is not enabled, and the web lint run is not type-aware, so A2 and all web
+promise handling are checked in review. Its default
 `ignoreVoid: true` permits a bare `void`, so a passing lint run alone does not
 prove A1. These rules do not prove that required writes settle before a response;
 that needs the behavior checks in the owning specification.
@@ -138,7 +143,7 @@ that needs the behavior checks in the owning specification.
 | ID | Rule |
 | --- | --- |
 | NE1 | Keep request-specific values in local variables or pass them explicitly. Never store the current user, request or admission result in a singleton provider's fields. |
-| NE2 | Inject shared clients and validated configuration through providers. Follow A4 for resource ownership; do not close injected clients from their consumers. |
+| NE2 | Inject shared clients and validated configuration through providers. Follow A4: only the designated lifecycle owner closes a shared client; consumers that merely borrow it do not. |
 | NE3 | Use guards for authentication and authorization, pipes for transport input validation, interceptors for request/response interception, and filters for exception translation. Keep transport handlers focused on orchestration. |
 | NE4 | Check lifecycle ordering before relying on another component's work. Interceptor pre-handler code runs after guards but before parameter pipes; it cannot assume those pipes have validated its input. |
 
@@ -159,4 +164,4 @@ ordering in NE4.
 
 | ID | Rule |
 | --- | --- |
-| P1 | Every changed TypeScript file passes `prettier --check`. |
+| FMT1 | Every changed TypeScript file passes `prettier --check`. |
