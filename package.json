@@ -15,6 +15,7 @@
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
+    "test:integration": "npm run test:e2e -w apps/api",
     "check:contracts": "tsc -p packages/contracts && node apps/web/src/fixtures/check.ts"
   },
   "devDependencies": {

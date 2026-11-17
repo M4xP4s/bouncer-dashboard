@@ -98,6 +98,12 @@ and that long a stale row for changes no event carries. Cases: browser tests.
 | `apps/web/src/live/rows.test.ts`, `apps/web/src/live/useLiveUsers.test.tsx` | Order by window, then version; only a snapshot replaces an equal row; each snapshot trigger; one in flight, one merged follow-up; a newer event beats a slow snapshot; a failed snapshot keeps the rows; a stale alert is dropped; cleanup. |
 | `apps/web/src/App.test.tsx`, `apps/web/src/assembled.test.tsx` | Connecting sets no update time; an event or a snapshot moves it. |
 
+| Real store ([how to run](rate-limiting.md#test-plan)) | Cases |
+| --- | --- |
+| `apps/api/test/live-events.e2e-spec.ts` | An admitted request reaches a connected socket client as `rate:update` with the exact row and request. |
+| `apps/api/test/alerts.e2e-spec.ts` | One `rate:limit_exceeded` per burst of rejections; a reset, a grant and a limit change each re-arm it without alerting; a rejection recorded late cannot use up the alert of the generation after such an action. |
+| `apps/api/test/admin-http.e2e-spec.ts` | A handshake with a missing or a user token is refused; every request and every admin action emits its full row with a rising version. |
+
 ## Milestone
 
 After `npm ci`, `cp .env.example .env`, `docker compose up -d redis` and

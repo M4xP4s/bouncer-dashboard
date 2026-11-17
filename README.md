@@ -25,6 +25,7 @@ npm run build
 npm run lint
 npm test                            # needs nothing running
 npm run check:contracts             # the fixture data against its own rules
+npm run test:integration            # empties database 1 of the Redis on :6379, or TEST_REDIS_URL
 ```
 
 To run the API and the dashboard on the host:
