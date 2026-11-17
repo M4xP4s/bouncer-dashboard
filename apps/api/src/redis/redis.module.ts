@@ -9,24 +9,23 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createClient } from 'redis';
 import { APP_CONFIG, type AppConfig } from '../config/config.js';
 
-/** Injection token for the one connected Redis client. */
+/** Injection token for the connected Redis client. */
 export const REDIS = Symbol('REDIS');
 
-/**
- * Client options, chosen with `supervise` below so that no command can wait
- * without a bound. Each was tried against a Redis that was stopped and one
- * that was paused (accepting connections but not answering); the defaults
- * leave a `MULTI` waiting indefinitely in both cases.
- */
+/** How long a socket may stay silent before it is closed. */
+const SILENCE_LIMIT_MS = 3000;
+
 function redisOptions(url: string, state: { connected: boolean }) {
   return {
     url,
+    // One PING a second, so a healthy idle connection is never silent.
+    pingInterval: 1000,
     socket: {
       connectTimeout: 1000,
-      // Before the first successful connection, fail: the process should
-      // refuse to start without Redis rather than hang. Afterwards, retry
-      // every half second for as long as it takes, including after a socket
-      // timeout, which the default strategy treats as final.
+      // Covers a peer that accepts the connection and then never answers.
+      socketTimeout: SILENCE_LIMIT_MS,
+      // Fail until the first connection succeeds, so the API refuses to
+      // start without Redis; afterwards retry every half second.
       reconnectStrategy: (_retries: number, cause: Error) =>
         state.connected ? 500 : cause,
     },
@@ -38,11 +37,7 @@ function createRedisClient(url: string, state: { connected: boolean }) {
   return createClient(redisOptions(url, state));
 }
 
-/**
- * The client type every consumer and every mock uses. Taken from the call
- * above because the client's type depends on the options it was created
- * with.
- */
+/** The client type depends on its options, so it is taken from the factory. */
 export type RedisClient = ReturnType<typeof createRedisClient>;
 
 /** A refused connection arrives as an AggregateError with no message. */
@@ -52,12 +47,9 @@ function describe(error: unknown): string {
 }
 
 /**
- * Watches one connection: logs it going down and coming back, once per
- * change, and drops it when Redis has stopped answering.
- *
- * The log is needed because the client emits an error for every failed
- * reconnect attempt (two a second), and an `error` event with no listener
- * would end the process.
+ * Logs a connection going down and coming back, once per change. The client
+ * emits an `error` for every failed reconnect, and one with no listener would
+ * end the process.
  */
 function supervise(client: RedisClient, name: string): void {
   const logger = new Logger(`Redis:${name}`);
@@ -69,8 +61,7 @@ function supervise(client: RedisClient, name: string): void {
   };
 
   client.on('error', (error: Error) => {
-    // An error on a connection that is still up (an error reply to the
-    // interval ping, for example) is reported but is not an outage.
+    // An error on a connection that is still up is not an outage.
     if (client.isReady) logger.error(describe(error));
     else markDown(describe(error));
   });
@@ -81,11 +72,7 @@ function supervise(client: RedisClient, name: string): void {
   });
 }
 
-/**
- * Creates one supervised client and connects it, or throws if that fails.
- * Every connection is made here, each with its own reconnect state, so each
- * one fails fast at startup and retries only after it has once connected.
- */
+/** Creates a client and connects it, or throws if the first attempt fails. */
 export async function connectRedis(
   url: string,
   name = 'main',
@@ -108,10 +95,9 @@ export async function connectRedis(
 }
 
 /**
- * Closes a connection on shutdown. A healthy connection is given a second
- * to receive the replies it is still owed, because dropping it at once
- * rejects those commands. Then it is dropped whatever its state, so shutdown
- * never waits on a Redis that is absent or has just stopped answering.
+ * Closes a connection on shutdown. A healthy one gets a second to receive the
+ * replies it is owed; then it is dropped whatever its state, so shutdown never
+ * waits on a Redis that has stopped answering.
  */
 export async function closeRedis(client: RedisClient): Promise<void> {
   if (client.isReady) {
@@ -123,10 +109,7 @@ export async function closeRedis(client: RedisClient): Promise<void> {
   client.destroy();
 }
 
-/**
- * Provides the one Redis client. Connecting is part of building the
- * application, so the API does not listen until Redis has answered.
- */
+/** Provides the Redis client; the API does not listen until it has connected. */
 @Global()
 @Module({
   providers: [
@@ -141,7 +124,7 @@ export async function closeRedis(client: RedisClient): Promise<void> {
 export class RedisModule implements OnApplicationShutdown {
   constructor(@Inject(REDIS) private readonly client: RedisClient) {}
 
-  /** Without this the open socket keeps the process alive after shutdown. */
+  /** Without this the open socket keeps the process alive. */
   async onApplicationShutdown(): Promise<void> {
     await closeRedis(this.client);
   }
