@@ -17,7 +17,8 @@
     "test": "npm test --workspaces --if-present",
     "test:integration": "npm run test:e2e -w apps/api",
     "check:contracts": "tsc -p packages/contracts && node apps/web/src/fixtures/check.ts",
-    "check:two-process": "node scripts/two-process-check.mjs"
+    "check:two-process": "node scripts/two-process-check.mjs",
+    "demo:traffic": "node scripts/traffic.mjs"
   },
   "devDependencies": {
     "typescript": "^6.0.0"

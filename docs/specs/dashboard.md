@@ -75,7 +75,8 @@ and [live updates](live-updates.md#behavior).
 Consumes the routes of [admin API](admin-api.md#interface), the events of
 [live updates](live-updates.md#interface) and `packages/contracts` types. Vite
 serves port 5173 and forwards `/api` and `/socket.io` to the API, so calls are
-relative; the built page is served as [platform](platform.md#behavior) says.
+relative; the API serves the built page on its own origin
+([platform](platform.md#behavior) rule 9).
 Defines the `sessionStorage` key `adminToken` and `VITE_FIXTURES` (development
 server only; `1` selects fixtures).
 

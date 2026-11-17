@@ -1,0 +1,12 @@
+# The image is built from source: dependencies and build outputs are made
+# inside it, and local settings stay out.
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+.git
+.env
+.env.*
+!.env.example
+docs
+*.md

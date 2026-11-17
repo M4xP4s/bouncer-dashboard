@@ -25,7 +25,7 @@ npm run build
 npm run lint
 npm test                            # needs nothing running
 npm run check:contracts             # the fixture data against its own rules
-npm run test:integration            # needs a Redis server of its own, below
+npm run test:integration            # after a build; needs a Redis server of its own, below
 npm run check:two-process           # after a build, on that same server; API ports 3203 and 3204
 ```
 
@@ -54,12 +54,24 @@ cp .env.example .env                # demo values; each one is explained there
 npm run dev                         # API on :3000, dashboard on http://localhost:5173
 ```
 
-`npm run start:dev -w apps/api` starts the API alone. The dashboard also runs
-without an API, on fixture data:
+`npm run start:dev -w apps/api` starts the API alone. After `npm run build`,
+`node apps/api/dist/main.js` serves the built dashboard and the API together on
+http://localhost:3000. The dashboard also runs without an API, on fixture data:
 
 ```sh
 VITE_FIXTURES=1 npm run dev -w apps/web
 ```
+
+To run everything in containers instead, with ports 3000 and 6379 free:
+
+```sh
+docker compose up --build --wait    # Redis and the application, page on http://127.0.0.1:3000
+docker compose down -v              # stops both and deletes the Redis data
+```
+
+`npm run demo:traffic` sends requests as five demo users, so the dashboard
+shows every status, then a slow trickle until Ctrl+C. It targets
+http://localhost:3000, or the base URL given after `--`.
 
 ## Documentation
 
