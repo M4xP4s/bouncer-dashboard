@@ -38,7 +38,6 @@ and [live updates](live-updates.md#behavior).
    and actions only raise a version. A production build holds none of it;
    `npm run check:contracts` fails if the data breaks its rules.
    (Expectation: maintainability)
-
 6. **Table.** Plain string order of the ID, exactly the headers User ID,
    Remaining / Total, Reset Time, Status and Last Request ([P1]); the server's
    values, minutes to reset ("11:00:00 UTC (18m)"), a suspension note, "Never"
@@ -112,7 +111,6 @@ Vitest in jsdom (`npm test -w apps/web`), paths under `apps/web/src/`:
   event ignored; cleanup.
 - `lib/latestRequests.test.ts`: last copy wins, newest first, cap of 100.
   `fixtures/check.ts` runs as `npm run check:contracts`.
-
 - `api/useSession.test.tsx`: an old token's late responses, a 401 included,
   are inert; StrictMode; refusal ends the session first; an action 401.
   `lib/useRequest.test.tsx`: key change cancels; coalescing; A, B, A.
@@ -141,7 +139,6 @@ Vitest in jsdom (`npm test -w apps/web`), paths under `apps/web/src/`:
 2. `cp .env.example .env`, `docker compose up -d redis`, `npm run dev`, same
    address: a wrong token returns to the field with "The admin token was not
    accepted."; `demo-admin-token` gives "Live" and a "Last update" time.
-
 3. Fixture mode: 12 rows; user-01 OK, user-04 Warning, user-06 Exceeded until
    4 s, user-09 suspended until 11:30:00 UTC, user-12 "Never"; user-01 reads
    87 / 100 at 2 s; "user-1" leaves user-10 to 12; cards 12, 64%, 41.
@@ -159,7 +156,6 @@ lifetime is untested.
 [P20]: ../PITFALLS.md#p20-taking-a-connection-for-delivery
 [P21]: ../PITFALLS.md#p21-removing-another-components-listeners
 [P22]: ../PITFALLS.md#p22-applying-a-response-without-checking-what-it-was-for
-
 [P1]: ../PITFALLS.md#p1-renaming-what-the-brief-names
 [P4]: ../PITFALLS.md#p4-a-near-limit-figure-that-drops-when-users-get-blocked
 [P23]: ../PITFALLS.md#p23-essential-data-waiting-for-optional-data
