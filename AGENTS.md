@@ -19,6 +19,10 @@ kind of fact is written.
 - Follow the specification-first process in
   [the documentation map](docs/README.md#specifications). Do not commit to
   `main`.
+- Run [the requirements check](docs/README.md#requirements-check) at each
+  of its three points: before a specification commit, before opening a pull
+  request and before a milestone tag. On a deviation, fix the code or stop
+  and ask the owner; do not document it away.
 - Base requirements are implemented before improvements.
 - Every commit builds, lints and passes the tests that exist at that commit.
 - Open a pull request and wait for the owner's review. Merge only when the

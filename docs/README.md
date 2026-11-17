@@ -34,6 +34,24 @@ second time and they do not contradict it, so a change is made in one place.
 There is no separate decision log and no separate reference document: a topic
 is defined in the specification of the capability it belongs to.
 
+## Requirements check
+
+The requirements are fixed, and the work is compared with them at three
+set points. Each time the items are re-read in
+[REQUIREMENTS.md](REQUIREMENTS.md) itself, not recalled and not taken from a
+specification's summary of them.
+
+| When | What is compared | Where the result is written |
+| --- | --- | --- |
+| Before a specification commit | Every behavior rule against the item it cites. A rule that settles an ambiguity is marked **Interpretation**; a rule that departs from a clear item is not allowed. | The specification |
+| Before a pull request is opened | The items the pull request touches against its code, its tests and what the running system shows. | A "Requirements check" list in the pull request description: each item, and "met", "not yet" or "deviates" |
+| Before a milestone tag | Every numbered item of the brief and every additional expectation against the repository as a whole. | `VERIFICATION.md` |
+
+A deviation is never left standing and never explained away in a document.
+The code is brought back to the requirement, or the work stops and the owner
+decides. Adding something the brief does not ask for is allowed only when it
+changes nothing the brief does ask for, and it is labelled as an addition.
+
 ## Specifications
 
 There is one specification per capability, not per pull request. Each is a
@@ -52,6 +70,11 @@ stable document that grows as the capability does.
   plan and links to results. It never says that a planned case has passed.
   `VERIFICATION.md` records the date, the revision, the result and the
   limits, and only for checks run in this repository.
+- **A specification is a milestone.** It ends in something a reviewer, human
+  or agent, can verify without reading the code: a command and the output it
+  must produce, or a screen and what it must show. Every behavior rule is
+  reachable from a test-plan case or a milestone step. A rule that nothing
+  can check is rewritten or removed.
 - **Short.** Aim for 60 to 120 lines per capability. A section with nothing
   to say is left out. When a specification grows, remove implementation
   inventory before splitting it.
@@ -63,6 +86,7 @@ stable document that grows as the capability does.
 | Interface | Routes, events and storage keys. Payloads are named by type and not redefined. |
 | Decisions | Each significant choice, in a few sentences: what was asked, what follows from it, the mechanism chosen, the alternatives and their cost, and which test-plan cases are meant to show it. |
 | Test plan | The cases to write and where each runs: against a mocked store, a real store or a browser environment. |
+| Milestone | How to see that the capability works: the commands to run and their expected result, and for anything visible the steps in the browser and what appears. Written so that a person or an agent can follow it literally. |
 | Limits | What this capability does not do and does not prove. |
 
 ### Index
