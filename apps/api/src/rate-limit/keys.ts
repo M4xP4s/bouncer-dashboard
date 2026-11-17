@@ -2,14 +2,18 @@
 
 const SECOND_MS = 1000;
 export const MINUTES_PER_HOUR = 60;
-export const MINUTE_MS = 60 * SECOND_MS;
+const SECONDS_PER_MINUTE = 60;
+export const MINUTE_MS = SECONDS_PER_MINUTE * SECOND_MS;
 export const HOUR_MS = MINUTES_PER_HOUR * MINUTE_MS;
 export const HOURS_PER_DAY = 24;
+const DAY_MS = HOURS_PER_DAY * HOUR_MS;
+const DENIED_COUNT_RETENTION_DAYS = 2;
 
 export const HISTORY_MAX_RECORDS = 100;
-export const HISTORY_TTL_MS = HOURS_PER_DAY * HOUR_MS;
+export const HISTORY_TTL_MS = DAY_MS;
 export const HISTORY_TTL_SECONDS = HISTORY_TTL_MS / SECOND_MS;
-export const DENIED_COUNT_TTL_SECONDS = 48 * 60 * 60;
+export const DENIED_COUNT_TTL_SECONDS =
+  DENIED_COUNT_RETENTION_DAYS * (DAY_MS / SECOND_MS);
 
 /** Start of the UTC clock hour that `now` falls in. */
 export const windowStart = (now: number): number => now - (now % HOUR_MS);

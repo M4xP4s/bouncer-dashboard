@@ -364,12 +364,14 @@ describe('admin HTTP', () => {
         failure: 'store outage',
         error: new StoreUnavailable(new Error('offline')),
         status: 503,
+        message: 'The rate limit store did not answer.',
       },
       {
         ...action,
         failure: 'programming defect',
         error: new TypeError('bug'),
         status: 500,
+        message: 'Internal server error',
       },
     ]),
   )('$cause maps $failure to $status without emitting', async (action) => {
@@ -380,6 +382,7 @@ describe('admin HTTP', () => {
       .send(action.body);
 
     expectApiError(response, action.status);
+    expect(response.body).toMatchObject({ message: action.message });
     expect(store[action.storeMethod]).toHaveBeenCalledExactlyOnceWith(
       ...action.args,
     );

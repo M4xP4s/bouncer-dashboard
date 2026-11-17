@@ -1,39 +1,36 @@
 import {
-  ArgumentsHost,
   type ArgumentMetadata,
   BadRequestException,
   Body,
-  Catch,
   Controller,
   Delete,
-  type ExceptionFilter,
   Get,
   HttpCode,
   HttpStatus,
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
   Param,
   type PipeTransform,
   Post,
   Put,
   Query,
-  UseFilters,
   UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import { IsInt, Max, Min } from 'class-validator';
-import type { Response } from 'express';
-import type { UpdateCause, UserRow } from '@app/contracts';
+import type {
+  Analytics,
+  HistoryBucket,
+  UpdateCause,
+  UserDetail,
+  UserRow,
+} from '@app/contracts';
 import { AdminTokenGuard } from '../auth/admin-token.guard.js';
 import { APP_CONFIG, type AppConfig } from '../config/config.js';
 import { LiveGateway } from '../live/live.gateway.js';
-import {
-  RateLimitStore,
-  StoreUnavailable,
-} from '../rate-limit/rate-limit.store.js';
+import { RateLimitStore } from '../rate-limit/rate-limit.store.js';
 import { analytics } from './analytics.js';
 
 const MIN_ACTION_VALUE = 1;
@@ -88,28 +85,9 @@ export class SeededUserPipe implements PipeTransform<string, string> {
   }
 }
 
-/** A timed-out write may have landed; do not promise that it did not. */
-@Catch(StoreUnavailable)
-export class StoreUnavailableFilter implements ExceptionFilter {
-  private readonly logger = new Logger(StoreUnavailableFilter.name);
-  catch(error: StoreUnavailable, host: ArgumentsHost): void {
-    this.logger.error('Rate limit store did not answer', error.cause);
-    host
-      .switchToHttp()
-      .getResponse<Response>()
-      .status(HttpStatus.SERVICE_UNAVAILABLE)
-      .json({
-        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
-        error: 'Service Unavailable',
-        message: 'The rate limit store did not answer.',
-      });
-  }
-}
-
 /** Admin reads and actions are guarded and never consume a user's quota. */
 @Controller('admin')
 @UseGuards(AdminTokenGuard)
-@UseFilters(StoreUnavailableFilter)
 @UsePipes(
   new AdminValidationPipe({
     whitelist: true,
@@ -136,7 +114,7 @@ export class AdminController {
   }
 
   @Get('analytics')
-  async getAnalytics() {
+  async getAnalytics(): Promise<Analytics> {
     const now = Date.now();
     const [rows, denied] = await Promise.all([
       this.store.snapshot([...this.config.userIds], now),
@@ -146,7 +124,7 @@ export class AdminController {
   }
 
   @Get('users/:userId')
-  detail(@Param('userId', SeededUserPipe) userId: string) {
+  detail(@Param('userId', SeededUserPipe) userId: string): Promise<UserDetail> {
     return this.store.detail(userId, Date.now());
   }
 
@@ -154,7 +132,7 @@ export class AdminController {
   history(
     @Param('userId', SeededUserPipe) userId: string,
     @Query('range') range: unknown,
-  ) {
+  ): Promise<HistoryBucket[]> {
     if (range !== 'hour' && range !== 'day')
       throw new BadRequestException('Range must be hour or day.');
     return this.store.history(userId, range, Date.now());
@@ -162,59 +140,60 @@ export class AdminController {
 
   @Post('users/:userId/reset')
   @HttpCode(HttpStatus.OK)
-  reset(@Param('userId', SeededUserPipe) userId: string) {
+  async reset(
+    @Param('userId', SeededUserPipe) userId: string,
+  ): Promise<UserRow> {
     const now = Date.now();
-    return this.action('reset', now, this.store.reset(userId, now));
+    const row = await this.store.reset(userId, now);
+    return this.publishUpdate('reset', now, row);
   }
+
   @Put('users/:userId/limit')
-  limit(
+  async limit(
     @Param('userId', SeededUserPipe) userId: string,
     @Body() body: LimitBody,
-  ) {
+  ): Promise<UserRow> {
     const now = Date.now();
-    return this.action(
-      'limit',
-      now,
-      this.store.setLimit(userId, now, body.limit),
-    );
+    const row = await this.store.setLimit(userId, now, body.limit);
+    return this.publishUpdate('limit', now, row);
   }
+
   @Post('users/:userId/suspension')
   @HttpCode(HttpStatus.OK)
-  suspend(
+  async suspend(
     @Param('userId', SeededUserPipe) userId: string,
     @Body() body: SuspendBody,
-  ) {
+  ): Promise<UserRow> {
     const now = Date.now();
-    return this.action(
-      'suspend',
-      now,
-      this.store.suspend(userId, now, body.minutes),
-    );
+    const row = await this.store.suspend(userId, now, body.minutes);
+    return this.publishUpdate('suspend', now, row);
   }
+
   @Delete('users/:userId/suspension')
-  unsuspend(@Param('userId', SeededUserPipe) userId: string) {
+  async unsuspend(
+    @Param('userId', SeededUserPipe) userId: string,
+  ): Promise<UserRow> {
     const now = Date.now();
-    return this.action('unsuspend', now, this.store.unsuspend(userId, now));
+    const row = await this.store.unsuspend(userId, now);
+    return this.publishUpdate('unsuspend', now, row);
   }
+
   @Post('users/:userId/extra')
   @HttpCode(HttpStatus.OK)
-  extra(
+  async extra(
     @Param('userId', SeededUserPipe) userId: string,
     @Body() body: ExtraBody,
-  ) {
+  ): Promise<UserRow> {
     const now = Date.now();
-    return this.action(
-      'extra',
-      now,
-      this.store.addExtra(userId, now, body.amount),
-    );
+    const row = await this.store.addExtra(userId, now, body.amount);
+    return this.publishUpdate('extra', now, row);
   }
-  private async action(
+
+  private publishUpdate(
     cause: UpdateCause,
     now: number,
-    pending: Promise<UserRow>,
-  ): Promise<UserRow> {
-    const row = await pending;
+    row: UserRow,
+  ): UserRow {
     this.live.emitUpdate({
       cause,
       at: new Date(now).toISOString(),

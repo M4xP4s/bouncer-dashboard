@@ -29,6 +29,8 @@ import {
 } from './keys.js';
 import { buildRow, ROW_REPLY_COUNT, type RowReplies } from './row.js';
 
+type RedisTransaction = ReturnType<RedisClient['multi']>;
+
 // Connection/execution failures become 503; Redis error replies remain 500.
 export class StoreUnavailable extends Error {
   constructor(cause: unknown) {
@@ -298,7 +300,7 @@ export class RateLimitStore {
   private async adminAction(
     userId: string,
     now: number,
-    write: (multi: ReturnType<typeof this.redis.multi<'typed'>>) => void,
+    write: (multi: RedisTransaction) => void,
   ): Promise<UserRow> {
     const replies = await this.transaction((multi) => {
       write(multi);
@@ -311,7 +313,7 @@ export class RateLimitStore {
 
   /** One command order for every row, paired with RowReplies and buildRow. */
   private appendRowRead(
-    multi: ReturnType<typeof this.redis.multi<'typed'>>,
+    multi: RedisTransaction,
     userId: string,
     now: number,
   ): void {
@@ -325,7 +327,7 @@ export class RateLimitStore {
 
   /** Fail fast while disconnected; wrap only execution, never our own code. */
   private async transaction(
-    queue: (multi: ReturnType<typeof this.redis.multi<'typed'>>) => void,
+    queue: (multi: RedisTransaction) => void,
   ): Promise<unknown[]> {
     // The client otherwise holds MULTI until a reconnect attempt settles and
     // might apply a mutation after its caller has already given up.

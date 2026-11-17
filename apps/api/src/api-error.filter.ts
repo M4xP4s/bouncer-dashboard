@@ -3,9 +3,11 @@ import {
   type ArgumentsHost,
   Catch,
   HttpException,
+  HttpStatus,
   Logger,
 } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
+import { StoreUnavailable } from './rate-limit/rate-limit.store.js';
 
 /** Keep middleware and route errors in one envelope without exposing defects. */
 @Catch()
@@ -31,6 +33,14 @@ export class ApiErrorFilter extends BaseExceptionFilter<unknown> {
     statusCode: number;
     payload: string | object;
   } {
+    if (error instanceof StoreUnavailable) {
+      this.logger.error('Rate limit store did not answer', error.cause);
+      // A lost reply leaves the outcome of a write uncertain.
+      return {
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        payload: 'The rate limit store did not answer.',
+      };
+    }
     if (error instanceof HttpException) {
       return { statusCode: error.getStatus(), payload: error.getResponse() };
     }
