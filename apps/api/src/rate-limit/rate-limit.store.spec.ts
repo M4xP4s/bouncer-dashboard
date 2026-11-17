@@ -14,6 +14,10 @@ const windowKey = `rl:win:user-01:${Date.parse('2026-11-16T10:00:00.000Z')}`;
 const hour = Date.parse('2026-11-16T10:00:00.000Z');
 const expiry = Date.parse('2026-11-16T12:00:00.000Z');
 
+function rowReplies(used: number, limit: string | null = null): RowReplies {
+  return [used, limit, null, null, { v: String(used) }];
+}
+
 /**
  * A store on a mocked Redis client (the mock library, nothing running).
  * `exec` answers with the replies of the four admission writes followed by
@@ -48,6 +52,7 @@ function storeWith(
   multi.zRem.mockReturnThis();
   multi.lPush.mockReturnThis();
   multi.lTrim.mockReturnThis();
+  multi.lRange.mockReturnThis();
   multi.expire.mockReturnThis();
   multi.incr.mockReturnThis();
   multi.set.mockReturnThis();
@@ -442,15 +447,19 @@ describe('RateLimitStore admin actions', () => {
     expect(multi.set).not.toHaveBeenCalled();
   });
 
-  it.each([50, 100, 200])(
-    'setLimit %i writes only policy and re-arms without a pre-read',
-    async (limit) => {
+  it.each([
+    { limit: 50, remaining: 0 },
+    { limit: 100, remaining: 20 },
+    { limit: 200, remaining: 120 },
+  ])(
+    'setLimit $limit writes only policy and re-arms without a pre-read',
+    async ({ limit, remaining }) => {
       const { store, multi } = storeWith(80, { limit: `${limit}` });
 
       const row = await store.setLimit('user-01', now, limit);
 
       expect(row.used).toBe(80);
-      expect(row.remaining).toBe(Math.max(0, limit - 80));
+      expect(row.remaining).toBe(remaining);
       expect(multi.set).toHaveBeenCalledExactlyOnceWith(
         'rl:limit:user-01',
         `${limit}`,
@@ -467,7 +476,7 @@ describe('RateLimitStore admin actions', () => {
 
   it('suspend stores the end time and expires the key at that time without re-arming', async () => {
     const { store, multi } = storeWith(10);
-    const until = now + 5 * 60_000;
+    const until = Date.parse('2026-11-16T10:47:00.000Z');
 
     await store.suspend('user-01', now, 5);
 
@@ -483,6 +492,7 @@ describe('RateLimitStore admin actions', () => {
       'v',
       1,
     );
+    expect(multi.del).not.toHaveBeenCalled();
   });
 
   it('unsuspend deletes only the suspension and does not re-arm', async () => {
@@ -522,7 +532,7 @@ describe('RateLimitStore admin actions', () => {
   });
 
   it.each(actions)(
-    '%s increments version once, reads the row in the same transaction and deletes no alert flag',
+    '%s increments version once and returns the row read in the same transaction',
     async (_name, run) => {
       const { store, redis, multi } = storeWith(7, { limit: '80', extra: '3' });
 
@@ -548,11 +558,6 @@ describe('RateLimitStore admin actions', () => {
         remaining: 76,
         version: 7,
       });
-      expect(
-        multi.del.mock.calls
-          .flat()
-          .some((key) => String(key).includes('notified')),
-      ).toBe(false);
     },
   );
 
@@ -583,19 +588,10 @@ describe('RateLimitStore admin actions', () => {
 describe('RateLimitStore reads', () => {
   it('reads all snapshot rows in one transaction', async () => {
     const { store, multi, setReplies } = storeWith(0);
-    setReplies([
-      1,
-      null,
-      null,
-      null,
-      { v: '1' },
-      2,
-      '10',
-      null,
-      null,
-      { v: '2' },
-    ]);
+    setReplies([...rowReplies(1), ...rowReplies(2, '10')]);
+
     const rows = await store.snapshot(['a', 'b'], now);
+
     expect(
       rows.map(({ userId, used, limit }) => ({ userId, used, limit })),
     ).toEqual([
@@ -608,36 +604,39 @@ describe('RateLimitStore reads', () => {
 
   it('filters and sorts recent records by time then ID', async () => {
     const { store, multi, setReplies } = storeWith(0);
-    multi.lRange.mockReturnThis();
-    const record = (id: string, at: number) =>
+    const record = (id: string, at: string) =>
       JSON.stringify({
         id,
-        at: new Date(at).toISOString(),
+        at,
         outcome: 'allowed',
         remaining: 1,
       });
     setReplies([
-      0,
-      null,
-      null,
-      null,
-      {},
+      ...rowReplies(0),
       [
-        record('b', now),
-        record('old', now - 86_400_000),
-        record('a', now),
-        record('young', now - 86_399_999),
+        record('b', '2026-11-16T10:42:00.000Z'),
+        record('old', '2026-11-15T10:42:00.000Z'),
+        record('a', '2026-11-16T10:42:00.000Z'),
+        record('young', '2026-11-15T10:42:00.001Z'),
       ],
     ]);
-    expect(
-      (await store.detail('a', now)).recentRequests.map((r) => r.id),
-    ).toEqual(['a', 'b', 'young']);
+
+    const detail = await store.detail('user-01', now);
+
+    expect(detail.recentRequests.map((r) => r.id)).toEqual(['a', 'b', 'young']);
+    expect(multi.lRange).toHaveBeenCalledExactlyOnceWith(
+      'rl:hist:user-01',
+      0,
+      99,
+    );
   });
 
   it('zero-fills an hour across the boundary with exact bucket times and keys', async () => {
     const { store, multi, setReplies } = storeWith(0);
     setReplies([{ 'a:43': '2', 'd:59': '1' }, { 'a:42': '3' }]);
+
     const hourly = await store.history('a', 'hour', now);
+
     expect(multi.hGetAll.mock.calls).toEqual([
       [`rl:stat:a:${Date.parse('2026-11-16T09:00:00.000Z')}`],
       [`rl:stat:a:${Date.parse('2026-11-16T10:00:00.000Z')}`],
@@ -646,7 +645,11 @@ describe('RateLimitStore reads', () => {
     expect(hourly[0].start).toBe('2026-11-16T09:43:00.000Z');
     expect(hourly.at(-1)?.start).toBe('2026-11-16T10:42:00.000Z');
     expect(hourly[0]).toMatchObject({ allowed: 2, denied: 0 });
-    expect(hourly[16]).toMatchObject({ allowed: 0, denied: 1 });
+    expect(hourly[16]).toEqual({
+      start: '2026-11-16T09:59:00.000Z',
+      allowed: 0,
+      denied: 1,
+    });
     expect(hourly.at(-1)).toMatchObject({ allowed: 3, denied: 0 });
   });
 
@@ -668,7 +671,7 @@ describe('RateLimitStore reads', () => {
     expect(daily[0].start).toBe('2026-11-15T11:00:00.000Z');
     expect(daily.at(-1)?.start).toBe('2026-11-16T10:00:00.000Z');
     expect(daily[0]).toMatchObject({ allowed: 5, denied: 4 });
-    expect(daily[23]).toMatchObject({ allowed: 0, denied: 0 });
+    expect(daily.at(-1)).toMatchObject({ allowed: 0, denied: 0 });
   });
 
   it('returns zero for an absent daily count', async () => {

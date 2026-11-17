@@ -19,7 +19,7 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { IsInt, Max, Min } from 'class-validator';
+import { IsInt, Max, Min, type ValidationError } from 'class-validator';
 import type {
   Analytics,
   HistoryBucket,
@@ -30,12 +30,13 @@ import type {
 import { AdminTokenGuard } from '../auth/admin-token.guard.js';
 import { APP_CONFIG, type AppConfig } from '../config/config.js';
 import { LiveGateway } from '../live/live.gateway.js';
+import { HOURS_PER_DAY, MINUTES_PER_HOUR } from '../rate-limit/keys.js';
 import { RateLimitStore } from '../rate-limit/rate-limit.store.js';
 import { analytics } from './analytics.js';
 
 const MIN_ACTION_VALUE = 1;
 const MAX_BASE_LIMIT = 10_000;
-const MAX_SUSPENSION_MINUTES = 1440;
+const MAX_SUSPENSION_MINUTES = HOURS_PER_DAY * MINUTES_PER_HOUR;
 const MAX_EXTRA_REQUESTS = 10_000;
 
 class LimitBody {
@@ -48,11 +49,23 @@ class ExtraBody {
   @IsInt() @Min(MIN_ACTION_VALUE) @Max(MAX_EXTRA_REQUESTS) amount: number;
 }
 
-const bodyFields = new Map<unknown, string>([
+const allowedKeyByBody = new Map<unknown, string>([
   [LimitBody, 'limit'],
   [SuspendBody, 'minutes'],
   [ExtraBody, 'amount'],
 ]);
+
+function hasUnexpectedBodyKey(value: unknown, allowedKey: string): boolean {
+  if (value === null || typeof value !== 'object') return false;
+  return Object.keys(value).some((key) => key !== allowedKey);
+}
+
+function invalidBodyException(errors: ValidationError[]): BadRequestException {
+  const message = errors
+    .flatMap((error) => Object.values(error.constraints ?? {}))
+    .join('; ');
+  return new BadRequestException(message || 'Invalid body.');
+}
 
 /** Reject unknown raw keys before Nest's transformation can remove them. */
 class AdminValidationPipe extends ValidationPipe {
@@ -60,13 +73,11 @@ class AdminValidationPipe extends ValidationPipe {
     value: unknown,
     metadata: ArgumentMetadata,
   ): Promise<unknown> {
-    const field = bodyFields.get(metadata.metatype);
+    const allowedKey = allowedKeyByBody.get(metadata.metatype);
     if (
       metadata.type === 'body' &&
-      field !== undefined &&
-      value !== null &&
-      typeof value === 'object' &&
-      Object.keys(value).some((key) => key !== field)
+      allowedKey !== undefined &&
+      hasUnexpectedBodyKey(value, allowedKey)
     ) {
       throw new BadRequestException('Unknown body field.');
     }
@@ -79,13 +90,13 @@ class AdminValidationPipe extends ValidationPipe {
 export class SeededUserPipe implements PipeTransform<string, string> {
   constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
   transform(userId: string): string {
-    if (!this.config.userIds.has(userId))
+    if (!this.config.userIds.has(userId)) {
       throw new NotFoundException('Unknown user.');
+    }
     return userId;
   }
 }
 
-/** Admin reads and actions are guarded and never consume a user's quota. */
 @Controller('admin')
 @UseGuards(AdminTokenGuard)
 @UsePipes(
@@ -93,12 +104,7 @@ export class SeededUserPipe implements PipeTransform<string, string> {
     whitelist: true,
     forbidNonWhitelisted: true,
     transform: true,
-    exceptionFactory: (errors) =>
-      new BadRequestException(
-        errors
-          .flatMap((error) => Object.values(error.constraints ?? {}))
-          .join('; ') || 'Invalid body.',
-      ),
+    exceptionFactory: invalidBodyException,
   }),
 )
 export class AdminController {
@@ -133,8 +139,9 @@ export class AdminController {
     @Param('userId', SeededUserPipe) userId: string,
     @Query('range') range: unknown,
   ): Promise<HistoryBucket[]> {
-    if (range !== 'hour' && range !== 'day')
+    if (range !== 'hour' && range !== 'day') {
       throw new BadRequestException('Range must be hour or day.');
+    }
     return this.store.history(userId, range, Date.now());
   }
 

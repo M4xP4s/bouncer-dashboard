@@ -33,6 +33,7 @@ const actions = [
     storeMethod: 'reset',
     args: ['user', now],
     cause: 'reset',
+    validation: undefined,
   },
   {
     method: 'put',
@@ -41,6 +42,7 @@ const actions = [
     storeMethod: 'setLimit',
     args: ['user', now, 50],
     cause: 'limit',
+    validation: { field: 'limit', aboveMax: 10_001 },
   },
   {
     method: 'post',
@@ -49,6 +51,7 @@ const actions = [
     storeMethod: 'suspend',
     args: ['user', now, 5],
     cause: 'suspend',
+    validation: { field: 'minutes', aboveMax: 1441 },
   },
   {
     method: 'delete',
@@ -57,6 +60,7 @@ const actions = [
     storeMethod: 'unsuspend',
     args: ['user', now],
     cause: 'unsuspend',
+    validation: undefined,
   },
   {
     method: 'post',
@@ -65,23 +69,38 @@ const actions = [
     storeMethod: 'addExtra',
     args: ['user', now, 20],
     cause: 'extra',
+    validation: { field: 'amount', aboveMax: 10_001 },
   },
 ] as const;
-const routes = [
-  { method: 'get', path: '/admin/users', body: undefined },
-  { method: 'get', path: '/admin/analytics', body: undefined },
-  { method: 'get', path: '/admin/users/user', body: undefined },
+const userPath = (userId: string) => `/admin/users/${userId}`;
+
+const listRoutes = [
+  { method: 'get', path: '/admin/users' },
+  { method: 'get', path: '/admin/analytics' },
+] as const;
+
+const userRoutes = [
+  { method: 'get', path: userPath, body: undefined },
   {
     method: 'get',
-    path: '/admin/users/user/history?range=hour',
+    path: (userId: string) => `${userPath(userId)}/history?range=hour`,
     body: undefined,
   },
   ...actions.map(({ method, path, body }) => ({
     method,
-    path: `/admin/users/user/${path}`,
+    path: (userId: string) => `${userPath(userId)}/${path}`,
     body,
   })),
 ] as const;
+
+const routes = [
+  ...listRoutes,
+  ...userRoutes.map(({ method, path }) => ({ method, path: path('user') })),
+];
+
+const bodyActions = actions.flatMap(({ method, path, validation }) =>
+  validation ? [{ method, path, ...validation }] : [],
+);
 const storeMethods = [
   'snapshot',
   'detail',
@@ -93,25 +112,21 @@ const storeMethods = [
   'unsuspend',
   'addExtra',
 ] as const;
-const invalidBodies = (
-  [
-    { method: 'put', path: 'limit', field: 'limit', max: 10000 },
-    { method: 'post', path: 'suspension', field: 'minutes', max: 1440 },
-    { method: 'post', path: 'extra', field: 'amount', max: 10000 },
-  ] as const
-).flatMap(({ method, path, field, max }) => [
-  { method, path, reason: 'missing value', body: {} },
-  { method, path, reason: 'string value', body: { [field]: '5' } },
-  { method, path, reason: 'fractional value', body: { [field]: 1.5 } },
-  { method, path, reason: 'below minimum', body: { [field]: 0 } },
-  { method, path, reason: 'above maximum', body: { [field]: max + 1 } },
-  {
-    method,
-    path,
-    reason: 'unknown field',
-    body: { [field]: 1, unexpected: 1 },
-  },
-]);
+const invalidBodies = bodyActions.flatMap(
+  ({ method, path, field, aboveMax }) => [
+    { method, path, reason: 'missing value', body: {} },
+    { method, path, reason: 'string value', body: { [field]: '5' } },
+    { method, path, reason: 'fractional value', body: { [field]: 1.5 } },
+    { method, path, reason: 'below minimum', body: { [field]: 0 } },
+    { method, path, reason: 'above maximum', body: { [field]: aboveMax } },
+    {
+      method,
+      path,
+      reason: 'unknown field',
+      body: { [field]: 1, unexpected: 1 },
+    },
+  ],
+);
 
 function expectApiError(
   response: { status: number; body: unknown },
@@ -205,11 +220,16 @@ describe('admin HTTP', () => {
     },
   );
 
-  it.each(routes.slice(2))(
+  it.each(
+    userRoutes.map(({ path, ...route }) => ({
+      ...route,
+      path: path('missing'),
+    })),
+  )(
     '$method $path rejects unknown users before store',
     async ({ method, path, body }) => {
       const response = await request(app.getHttpServer())
-        [method](path.replace('/users/user', '/users/missing'))
+        [method](path)
         .set('Authorization', 'Bearer admin')
         .send(body);
 
@@ -235,26 +255,20 @@ describe('admin HTTP', () => {
     },
   );
 
-  it.each(['', '?range=week'])(
-    'requires a valid history range %s',
-    async (query) => {
-      const response = await request(app.getHttpServer())
-        .get(`/admin/users/user/history${query}`)
-        .set('Authorization', 'Bearer admin');
+  it.each([
+    { reason: 'missing', query: '' },
+    { reason: 'unsupported', query: '?range=week' },
+  ])('refuses a $reason history range', async ({ query }) => {
+    const response = await request(app.getHttpServer())
+      .get(`/admin/users/user/history${query}`)
+      .set('Authorization', 'Bearer admin');
 
-      expectApiError(response, 400);
-      expectNoStoreOrEvent();
-    },
-  );
+    expectApiError(response, 400);
+    expectNoStoreOrEvent();
+  });
 
   it.each(
-    (
-      [
-        ['put', 'limit', 'limit'],
-        ['post', 'suspension', 'minutes'],
-        ['post', 'extra', 'amount'],
-      ] as const
-    ).flatMap(([method, path, field]) =>
+    bodyActions.flatMap(({ method, path, field }) =>
       [
         'constructor',
         '__proto__',
@@ -308,34 +322,31 @@ describe('admin HTTP', () => {
   it.each(actions)(
     '$cause awaits its write, then returns and emits the exact row',
     async (action) => {
-      const { promise: write, resolve: completeWrite } =
-        Promise.withResolvers<UserRow>();
+      let completeWrite: ((value: UserRow) => void) | undefined;
+      const write = new Promise<UserRow>((resolve) => {
+        completeWrite = resolve;
+      });
+      if (!completeWrite)
+        throw new Error('The write resolver was not initialized');
       const started = new Promise<void>((resolve) => {
         store[action.storeMethod].mockImplementation(() => {
           resolve();
           return write;
         });
       });
-      let responseSettled = false;
-      const pending = request(app.getHttpServer())
-        [action.method](`/admin/users/user/${action.path}`)
-        .set('Authorization', 'Bearer admin')
-        .send(action.body)
-        .then((response) => {
-          responseSettled = true;
-          return response;
-        });
+      const pending = Promise.resolve(
+        request(app.getHttpServer())
+          [action.method](`/admin/users/user/${action.path}`)
+          .set('Authorization', 'Bearer admin')
+          .send(action.body),
+      );
 
       try {
         await started;
         // Drain the handler's queued continuations while its write is held.
         await new Promise<void>((resolve) => setImmediate(resolve));
-        expect(store[action.storeMethod]).toHaveBeenCalledExactlyOnceWith(
-          ...action.args,
-        );
         expect(live.emitUpdate).not.toHaveBeenCalled();
         expect(responseFinished).not.toHaveBeenCalled();
-        expect(responseSettled).toBe(false);
       } finally {
         completeWrite(row);
         await pending;

@@ -15,10 +15,9 @@ export class AdminTokenGuard implements CanActivate {
   constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const token = bearerToken(
-      context.switchToHttp().getRequest<Request>().headers.authorization,
-    );
-    if (!token || !sameToken(token, this.config.adminToken)) {
+    const request = context.switchToHttp().getRequest<Request>();
+    const token = bearerToken(request.headers.authorization) ?? '';
+    if (!sameToken(token, this.config.adminToken)) {
       throw new UnauthorizedException('A valid admin token is required.');
     }
     return true;

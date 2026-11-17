@@ -22,6 +22,7 @@ import {
   MINUTE_MS,
   MINUTES_PER_HOUR,
   minuteInWindow,
+  minuteStart,
   statField,
   userFields,
   windowExpiry,
@@ -30,6 +31,7 @@ import {
 import { buildRow, ROW_REPLY_COUNT, type RowReplies } from './row.js';
 
 type RedisTransaction = ReturnType<RedisClient['multi']>;
+type HourCounts = Record<string, string>;
 
 // Connection/execution failures become 503; Redis error replies remain 500.
 export class StoreUnavailable extends Error {
@@ -63,9 +65,23 @@ const withoutRequest = ([used, ...rest]: RowReplies): RowReplies => [
 const generationOf = ([, , , , user]: RowReplies): number =>
   Number(user[userFields.generation] ?? 0);
 
-function compareIds(a: string, b: string): number {
-  if (a === b) return 0;
-  return a < b ? -1 : 1;
+// Concurrent requests can finish bookkeeping in a different order than they arrived.
+function newestFirst(a: RequestRecord, b: RequestRecord): number {
+  const timeOrder = Date.parse(b.at) - Date.parse(a.at);
+  if (timeOrder !== 0) return timeOrder;
+  if (a.id === b.id) return 0;
+  return a.id < b.id ? -1 : 1;
+}
+
+function recentRequestsOf(
+  storedRecords: string[],
+  now: number,
+): RequestRecord[] {
+  const cutoff = now - HISTORY_TTL_MS;
+  return storedRecords
+    .map((record) => JSON.parse(record) as RequestRecord)
+    .filter((record) => Date.parse(record.at) > cutoff)
+    .sort(newestFirst);
 }
 
 function bucketStarts(latest: number, count: number, stepMs: number): number[] {
@@ -75,19 +91,22 @@ function bucketStarts(latest: number, count: number, stepMs: number): number[] {
   );
 }
 
-function historyBucket(
-  time: number,
-  counts: Record<string, string>,
-  firstMinute: number,
-  minuteCount: number,
-): HistoryBucket {
+function minuteBucket(startMs: number, hourCounts: HourCounts): HistoryBucket {
+  const minute = minuteInWindow(startMs);
+  const allowed = Number(hourCounts[statField(false, minute)] ?? 0);
+  const denied = Number(hourCounts[statField(true, minute)] ?? 0);
+  const start = new Date(startMs).toISOString();
+  return { start, allowed, denied };
+}
+
+function hourBucket(startMs: number, hourCounts: HourCounts): HistoryBucket {
   let allowed = 0;
   let denied = 0;
-  for (let minute = firstMinute; minute < firstMinute + minuteCount; minute++) {
-    allowed += Number(counts[statField(false, minute)] ?? 0);
-    denied += Number(counts[statField(true, minute)] ?? 0);
+  for (let minute = 0; minute < MINUTES_PER_HOUR; minute++) {
+    allowed += Number(hourCounts[statField(false, minute)] ?? 0);
+    denied += Number(hourCounts[statField(true, minute)] ?? 0);
   }
-  const start = new Date(time).toISOString();
+  const start = new Date(startMs).toISOString();
   return { start, allowed, denied };
 }
 
@@ -230,16 +249,14 @@ export class RateLimitStore {
     const replies = await this.transaction((multi) => {
       for (const userId of userIds) this.appendRowRead(multi, userId, now);
     });
-    return userIds.map((userId, index) =>
-      buildRow(
-        userId,
-        replies.slice(
-          index * ROW_REPLY_COUNT,
-          (index + 1) * ROW_REPLY_COUNT,
-        ) as RowReplies,
-        now,
-      ),
-    );
+    return userIds.map((userId, index) => {
+      const offset = index * ROW_REPLY_COUNT;
+      const rowReplies = replies.slice(
+        offset,
+        offset + ROW_REPLY_COUNT,
+      ) as RowReplies;
+      return buildRow(userId, rowReplies, now);
+    });
   }
 
   async detail(userId: string, now: number): Promise<UserDetail> {
@@ -247,46 +264,20 @@ export class RateLimitStore {
       this.appendRowRead(multi, userId, now);
       multi.lRange(keys.history(userId), 0, HISTORY_MAX_RECORDS - 1);
     });
-    const recentRequests = (replies[ROW_REPLY_COUNT] as string[])
-      .map((record) => JSON.parse(record) as RequestRecord)
-      .filter((record) => Date.parse(record.at) > now - HISTORY_TTL_MS)
-      .sort(
-        (a, b) => Date.parse(b.at) - Date.parse(a.at) || compareIds(a.id, b.id),
-      );
-    const row = buildRow(
-      userId,
-      replies.slice(0, ROW_REPLY_COUNT) as RowReplies,
-      now,
-    );
+    const rowReplies = replies.slice(0, ROW_REPLY_COUNT) as RowReplies;
+    const storedRecords = replies[ROW_REPLY_COUNT] as string[];
+    const row = buildRow(userId, rowReplies, now);
+    const recentRequests = recentRequestsOf(storedRecords, now);
     return { row, recentRequests };
   }
 
-  async history(
+  history(
     userId: string,
     range: HistoryRange,
     now: number,
   ): Promise<HistoryBucket[]> {
-    const currentHour = windowStart(now);
-    const hours =
-      range === 'hour'
-        ? [currentHour - HOUR_MS, currentHour]
-        : bucketStarts(currentHour, HOURS_PER_DAY, HOUR_MS);
-    const replies = await this.transaction((multi) => {
-      for (const time of hours) multi.hGetAll(keys.stat(userId, time));
-    });
-    const counts = replies as Record<string, string>[];
-    if (range === 'hour') {
-      const currentMinute = now - (now % MINUTE_MS);
-      return bucketStarts(currentMinute, MINUTES_PER_HOUR, MINUTE_MS).map(
-        (time) => {
-          const values = counts[time < currentHour ? 0 : 1];
-          return historyBucket(time, values, minuteInWindow(time), 1);
-        },
-      );
-    }
-    return hours.map((time, index) =>
-      historyBucket(time, counts[index], 0, MINUTES_PER_HOUR),
-    );
+    if (range === 'hour') return this.minuteHistory(userId, now);
+    return this.hourlyHistory(userId, now);
   }
 
   async denied429(now: number): Promise<number> {
@@ -294,6 +285,46 @@ export class RateLimitStore {
       multi.get(keys.denied(now));
     });
     return Number(replies[0] ?? 0);
+  }
+
+  private async minuteHistory(
+    userId: string,
+    now: number,
+  ): Promise<HistoryBucket[]> {
+    const currentHourStart = windowStart(now);
+    const [previousHourCounts, currentHourCounts] = await this.statCounts(
+      userId,
+      [currentHourStart - HOUR_MS, currentHourStart],
+    );
+    return bucketStarts(minuteStart(now), MINUTES_PER_HOUR, MINUTE_MS).map(
+      (startMs) => {
+        const hourCounts =
+          startMs < currentHourStart ? previousHourCounts : currentHourCounts;
+        return minuteBucket(startMs, hourCounts);
+      },
+    );
+  }
+
+  private async hourlyHistory(
+    userId: string,
+    now: number,
+  ): Promise<HistoryBucket[]> {
+    const hourStarts = bucketStarts(windowStart(now), HOURS_PER_DAY, HOUR_MS);
+    const countsByHour = await this.statCounts(userId, hourStarts);
+    return hourStarts.map((startMs, index) =>
+      hourBucket(startMs, countsByHour[index]),
+    );
+  }
+
+  private async statCounts(
+    userId: string,
+    hourStarts: number[],
+  ): Promise<HourCounts[]> {
+    const replies = await this.transaction((multi) => {
+      for (const hourStart of hourStarts)
+        multi.hGetAll(keys.stat(userId, hourStart));
+    });
+    return replies as HourCounts[];
   }
 
   /** A row and its version are read after the action, in the same transaction. */

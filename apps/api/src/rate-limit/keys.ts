@@ -18,6 +18,8 @@ export const DENIED_COUNT_TTL_SECONDS =
 /** Start of the UTC clock hour that `now` falls in. */
 export const windowStart = (now: number): number => now - (now % HOUR_MS);
 
+export const minuteStart = (now: number): number => now - (now % MINUTE_MS);
+
 /** The next hour boundary: when the window that holds `now` ends. */
 export const resetAt = (now: number): number => windowStart(now) + HOUR_MS;
 
