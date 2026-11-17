@@ -1,11 +1,14 @@
 // UTC clock-hour windows; all times are milliseconds since the epoch.
 
 const SECOND_MS = 1000;
+export const MINUTES_PER_HOUR = 60;
 export const MINUTE_MS = 60 * SECOND_MS;
-const HOUR_MS = 60 * MINUTE_MS;
+export const HOUR_MS = MINUTES_PER_HOUR * MINUTE_MS;
+export const HOURS_PER_DAY = 24;
 
 export const HISTORY_MAX_RECORDS = 100;
-export const HISTORY_TTL_SECONDS = 24 * 60 * 60;
+export const HISTORY_TTL_MS = HOURS_PER_DAY * HOUR_MS;
+export const HISTORY_TTL_SECONDS = HISTORY_TTL_MS / SECOND_MS;
 export const DENIED_COUNT_TTL_SECONDS = 48 * 60 * 60;
 
 /** Start of the UTC clock hour that `now` falls in. */

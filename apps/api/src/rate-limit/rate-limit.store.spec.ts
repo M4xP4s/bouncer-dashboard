@@ -579,3 +579,101 @@ describe('RateLimitStore admin actions', () => {
     },
   );
 });
+
+describe('RateLimitStore reads', () => {
+  it('reads all snapshot rows in one transaction', async () => {
+    const { store, multi, setReplies } = storeWith(0);
+    setReplies([
+      1,
+      null,
+      null,
+      null,
+      { v: '1' },
+      2,
+      '10',
+      null,
+      null,
+      { v: '2' },
+    ]);
+    const rows = await store.snapshot(['a', 'b'], now);
+    expect(
+      rows.map(({ userId, used, limit }) => ({ userId, used, limit })),
+    ).toEqual([
+      { userId: 'a', used: 1, limit: 100 },
+      { userId: 'b', used: 2, limit: 10 },
+    ]);
+    expect(multi.exec).toHaveBeenCalledOnce();
+    expect(multi.zCard).toHaveBeenCalledTimes(2);
+  });
+
+  it('filters and sorts recent records by time then ID', async () => {
+    const { store, multi, setReplies } = storeWith(0);
+    multi.lRange.mockReturnThis();
+    const record = (id: string, at: number) =>
+      JSON.stringify({
+        id,
+        at: new Date(at).toISOString(),
+        outcome: 'allowed',
+        remaining: 1,
+      });
+    setReplies([
+      0,
+      null,
+      null,
+      null,
+      {},
+      [
+        record('b', now),
+        record('old', now - 86_400_000),
+        record('a', now),
+        record('young', now - 86_399_999),
+      ],
+    ]);
+    expect(
+      (await store.detail('a', now)).recentRequests.map((r) => r.id),
+    ).toEqual(['a', 'b', 'young']);
+  });
+
+  it('zero-fills an hour across the boundary with exact bucket times and keys', async () => {
+    const { store, multi, setReplies } = storeWith(0);
+    setReplies([{ 'a:43': '2', 'd:59': '1' }, { 'a:42': '3' }]);
+    const hourly = await store.history('a', 'hour', now);
+    expect(multi.hGetAll.mock.calls).toEqual([
+      [`rl:stat:a:${Date.parse('2026-11-16T09:00:00.000Z')}`],
+      [`rl:stat:a:${Date.parse('2026-11-16T10:00:00.000Z')}`],
+    ]);
+    expect(hourly).toHaveLength(60);
+    expect(hourly[0].start).toBe('2026-11-16T09:43:00.000Z');
+    expect(hourly.at(-1)?.start).toBe('2026-11-16T10:42:00.000Z');
+    expect(hourly[0]).toMatchObject({ allowed: 2, denied: 0 });
+    expect(hourly[16]).toMatchObject({ allowed: 0, denied: 1 });
+    expect(hourly.at(-1)).toMatchObject({ allowed: 3, denied: 0 });
+  });
+
+  it('sums daily buckets with exact first and last times and hour keys', async () => {
+    const { store, multi, setReplies } = storeWith(0);
+    setReplies(
+      Array.from({ length: 24 }, (_, i) =>
+        i === 0 ? { 'a:0': '2', 'a:59': '3', 'd:1': '4' } : {},
+      ),
+    );
+    const daily = await store.history('a', 'day', now);
+    const firstHour = Date.parse('2026-11-15T11:00:00.000Z');
+    expect(multi.hGetAll.mock.calls).toEqual(
+      Array.from({ length: 24 }, (_, index) => [
+        `rl:stat:a:${firstHour + index * 3_600_000}`,
+      ]),
+    );
+    expect(daily).toHaveLength(24);
+    expect(daily[0].start).toBe('2026-11-15T11:00:00.000Z');
+    expect(daily.at(-1)?.start).toBe('2026-11-16T10:00:00.000Z');
+    expect(daily[0]).toMatchObject({ allowed: 5, denied: 4 });
+    expect(daily[23]).toMatchObject({ allowed: 0, denied: 0 });
+  });
+
+  it('returns zero for an absent daily count', async () => {
+    const { store, setReplies } = storeWith(0);
+    setReplies([null]);
+    expect(await store.denied429(now)).toBe(0);
+  });
+});

@@ -1,19 +1,31 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { ErrorReply } from 'redis';
-import type { RequestOutcome, RequestRecord, UserRow } from '@app/contracts';
+import type {
+  HistoryBucket,
+  HistoryRange,
+  RequestOutcome,
+  RequestRecord,
+  UserDetail,
+  UserRow,
+} from '@app/contracts';
 import { REDIS, type RedisClient } from '../redis/redis.module.js';
 import {
   counterExpiry,
   DENIED_COUNT_TTL_SECONDS,
   HISTORY_MAX_RECORDS,
   HISTORY_TTL_SECONDS,
+  HISTORY_TTL_MS,
+  HOUR_MS,
+  HOURS_PER_DAY,
   keys,
   MINUTE_MS,
+  MINUTES_PER_HOUR,
   minuteInWindow,
   statField,
   userFields,
   windowExpiry,
+  windowStart,
 } from './keys.js';
 import { buildRow, ROW_REPLY_COUNT, type RowReplies } from './row.js';
 
@@ -48,6 +60,34 @@ const withoutRequest = ([used, ...rest]: RowReplies): RowReplies => [
 
 const generationOf = ([, , , , user]: RowReplies): number =>
   Number(user[userFields.generation] ?? 0);
+
+function compareIds(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+function bucketStarts(latest: number, count: number, stepMs: number): number[] {
+  return Array.from(
+    { length: count },
+    (_, index) => latest - (count - 1 - index) * stepMs,
+  );
+}
+
+function historyBucket(
+  time: number,
+  counts: Record<string, string>,
+  firstMinute: number,
+  minuteCount: number,
+): HistoryBucket {
+  let allowed = 0;
+  let denied = 0;
+  for (let minute = firstMinute; minute < firstMinute + minuteCount; minute++) {
+    allowed += Number(counts[statField(false, minute)] ?? 0);
+    denied += Number(counts[statField(true, minute)] ?? 0);
+  }
+  const start = new Date(time).toISOString();
+  return { start, allowed, denied };
+}
 
 // Quota decisions are atomic; bookkeeping tolerates unavailability, not error replies.
 @Injectable()
@@ -181,6 +221,77 @@ export class RateLimitStore {
         .pExpireAt(keys.extra(userId, now), windowExpiry(now))
         .hIncrBy(keys.user(userId), userFields.generation, 1);
     });
+  }
+
+  /** Read each row and its version together in one transaction. */
+  async snapshot(userIds: readonly string[], now: number): Promise<UserRow[]> {
+    const replies = await this.transaction((multi) => {
+      for (const userId of userIds) this.appendRowRead(multi, userId, now);
+    });
+    return userIds.map((userId, index) =>
+      buildRow(
+        userId,
+        replies.slice(
+          index * ROW_REPLY_COUNT,
+          (index + 1) * ROW_REPLY_COUNT,
+        ) as RowReplies,
+        now,
+      ),
+    );
+  }
+
+  async detail(userId: string, now: number): Promise<UserDetail> {
+    const replies = await this.transaction((multi) => {
+      this.appendRowRead(multi, userId, now);
+      multi.lRange(keys.history(userId), 0, HISTORY_MAX_RECORDS - 1);
+    });
+    const recentRequests = (replies[ROW_REPLY_COUNT] as string[])
+      .map((record) => JSON.parse(record) as RequestRecord)
+      .filter((record) => Date.parse(record.at) > now - HISTORY_TTL_MS)
+      .sort(
+        (a, b) => Date.parse(b.at) - Date.parse(a.at) || compareIds(a.id, b.id),
+      );
+    const row = buildRow(
+      userId,
+      replies.slice(0, ROW_REPLY_COUNT) as RowReplies,
+      now,
+    );
+    return { row, recentRequests };
+  }
+
+  async history(
+    userId: string,
+    range: HistoryRange,
+    now: number,
+  ): Promise<HistoryBucket[]> {
+    const currentHour = windowStart(now);
+    const hours =
+      range === 'hour'
+        ? [currentHour - HOUR_MS, currentHour]
+        : bucketStarts(currentHour, HOURS_PER_DAY, HOUR_MS);
+    const replies = await this.transaction((multi) => {
+      for (const time of hours) multi.hGetAll(keys.stat(userId, time));
+    });
+    const counts = replies as Record<string, string>[];
+    if (range === 'hour') {
+      const currentMinute = now - (now % MINUTE_MS);
+      return bucketStarts(currentMinute, MINUTES_PER_HOUR, MINUTE_MS).map(
+        (time) => {
+          const values = counts[time < currentHour ? 0 : 1];
+          return historyBucket(time, values, minuteInWindow(time), 1);
+        },
+      );
+    }
+    return hours.map((time, index) =>
+      historyBucket(time, counts[index], 0, MINUTES_PER_HOUR),
+    );
+  }
+
+  async denied429(now: number): Promise<number> {
+    const replies = await this.transaction((multi) => {
+      multi.get(keys.denied(now));
+    });
+    return Number(replies[0] ?? 0);
   }
 
   /** A row and its version are read after the action, in the same transaction. */
