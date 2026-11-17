@@ -1,16 +1,14 @@
 import type { Response } from 'supertest';
 import { loadConfig } from '../src/config/config.js';
 import {
+  FIRST_FAILURE_LIMIT_MS,
+  LATER_FAILURE_LIMIT_MS,
   SECOND_MS,
   type TestApplication,
   useRelayedApplication,
 } from './support/application.js';
 import { type Relay, relayToRedis } from './support/relay.js';
 
-// Platform rule 7 notices a silent Redis within about 4 s.
-const FIRST_FAILURE_LIMIT_MS = 5 * SECOND_MS;
-// Once the outage is known, a call must fail at once, not wait again.
-const LATER_FAILURE_LIMIT_MS = SECOND_MS / 2;
 const LATER_ROUNDS = 3;
 const TRAFFIC_INTERVAL_MS = 200;
 const RECOVERY_WAIT_MS = 8 * SECOND_MS;

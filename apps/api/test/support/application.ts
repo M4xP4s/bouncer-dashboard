@@ -38,6 +38,10 @@ export const windowKey = (userId: string, now = Date.now()) =>
 
 // A call that hangs fails its own test, not the whole run.
 export const REQUEST_DEADLINE_MS = 6 * SECOND_MS;
+// Platform rule 7 notices a silent Redis within about 4 s.
+export const FIRST_FAILURE_LIMIT_MS = 5 * SECOND_MS;
+// Once the outage is known, a call must fail at once, not wait again.
+export const LATER_FAILURE_LIMIT_MS = SECOND_MS / 2;
 const HANDSHAKE_TIMEOUT_MS = 2 * SECOND_MS;
 const BARRIER_WAIT_MS = 2 * SECOND_MS;
 // drainEvents spends this user's quota, so a test that drains events
