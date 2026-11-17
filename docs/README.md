@@ -121,16 +121,6 @@ Specifications are listed here as they are introduced.
 ### Quality navigation
 
 The additional expectations name six qualities: architecture, scalability,
-performance, reliability, security and maintainability. The table links
-each one to the specification sections that address it. It contains links
-only and is filled in as the specifications are written; a quality without a
-row has no section yet.
-
-| Quality | Sections |
-| --- | --- |
-| Reliability | [Platform: behavior](specs/platform.md#behavior), [Platform: decisions](specs/platform.md#decisions), [Admin API: decisions](specs/admin-api.md#decisions) |
-| Security | [Platform: behavior](specs/platform.md#behavior), [Platform: limits](specs/platform.md#limits) |
-| Maintainability | [Platform: behavior](specs/platform.md#behavior), [Platform: decisions](specs/platform.md#decisions) |
-| Architecture | [Rate limiting: decisions](specs/rate-limiting.md#decisions), [Live updates: decisions](specs/live-updates.md#decisions) |
-| Scalability | [Rate limiting: limits](specs/rate-limiting.md#limits), [Live updates: limits](specs/live-updates.md#limits), [Platform: decisions](specs/platform.md#decisions), [Admin API: decisions](specs/admin-api.md#decisions), [Admin API: limits](specs/admin-api.md#limits) |
-| Performance | [Rate limiting: decisions](specs/rate-limiting.md#decisions), [Live updates: decisions](specs/live-updates.md#decisions), [Admin API: decisions](specs/admin-api.md#decisions) |
+performance, reliability, security and maintainability. The
+[README](../README.md#where-each-quality-is-addressed) links each one to the
+decisions and limits that address it.

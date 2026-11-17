@@ -115,7 +115,7 @@ Mocked store (`vitest-mock-extended`), no Redis, in `apps/api/src/`:
 
 Real store, in `apps/api/test/`, started with the whole application (the
 command, and the Redis server of its own that the suite needs, are in the
-[README](../../README.md#commands); the suite empties the database it uses):
+[README](../../README.md#verification); the suite empties the database it uses):
 - `admission.e2e-spec.ts`: `x-count` 99 down to 0, then the 429; the quota
   changes exactly at the UTC hour ([P25]); one user's exhaustion leaves
   another's quota; a failing handler still counts; a 401 and a spoofed ID

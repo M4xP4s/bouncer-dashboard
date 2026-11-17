@@ -170,7 +170,7 @@ unreachable is lost. Cases: the delivery rows of the test plan.
 | `apps/api/test/admin-http.e2e-spec.ts` | A handshake with a missing or a user token is refused; every request and every admin action emits its full row with a rising version. |
 | `apps/api/test/cross-process.e2e-spec.ts` | A request to one application reaches a dashboard connected to a second one on the same Redis; a server on the Redis adapter refuses a dashboard with a wrong token; a dashboard whose application loses its Redis connection and gets it back, without a restart, receives the event of a request to the other application. With Redis stopped, a publish is reported, not rejected; a subscription survives a hang and the reconnect that follows it. |
 
-| Two processes ([how to run](../../README.md#commands)) | Cases |
+| Two processes ([how to run](../../README.md#verification)) | Cases |
 | --- | --- |
 | `scripts/two-process-check.mjs` | One dashboard per process, connected before a burst that both processes serve, each receive the burst's single `rate:limit_exceeded`, with the same request ID: one process emitted it, so the other received it through Redis. A request and a reset handled by the second process reach a dashboard connected to the first. |
 
