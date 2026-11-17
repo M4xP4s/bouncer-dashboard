@@ -36,6 +36,26 @@ expectations.
 6. A failed emit is logged and never fails the request or action that caused it;
    nothing is retried or replayed. (Expectation: reliability)
 
+7. Of two rows of one user the newer has the later `resetAt`, then the higher
+   `version`. An event, an action's response or a detail response replaces the
+   held row only if strictly newer, so they may arrive in either order and a
+   repeat changes nothing ([P19]). A `rate:limit_exceeded` that is not newer is
+   dropped whole, alert included. (Core feature 1; Expectation: reliability)
+8. An event never causes a request. A snapshot (the user list of
+   [admin-api](admin-api.md#interface)) replaces a held row unless the held one
+   is newer, so it also replaces an equal row that differs, repairing an ended
+   suspension or a removed rejected entry. Snapshots run one at a time, requests
+   meanwhile merge into one follow-up, a failed one keeps the rows. (Core
+   feature 1; Expectation: reliability)
+9. A snapshot is requested on every (re)connect, after a failed admin action,
+   when the page becomes visible and, only while visible, at the next reset time
+   of a held row and every 10 seconds. (Core feature 1; Expectation:
+   reliability)
+10. "Last update" is the `at` of the last applied event or the time of the last
+    successful snapshot; connecting alone does not set it. (Core feature 1)
+11. One hook owns the socket, removes the callbacks and timers it added and
+    does nothing after its session ends ([P21]). (Expectation: maintainability)
+
 ## Interface
 
 Socket.IO on the HTTP port, default path and namespace, server to client:
@@ -58,6 +78,13 @@ action set it again; re-arming only on a raised limit needs a read and a retry.
 Cost: lowering a limit can alert again that hour. Cases: interceptor and store
 specs.
 
+**Window, then version; snapshots repair.** Arrival order does not say which row
+is newer, and a new hour changes a row with no event, so the window comes first.
+Only a snapshot, read with its version in one transaction, may replace an equal
+row. Last arrival wins undoes a newer event; cancelling a snapshot can starve
+the display. Cost: a read every 10 seconds per visible dashboard (unmeasured),
+and that long a stale row for changes no event carries. Cases: browser tests.
+
 ## Test plan
 
 | Mocked store (`npm test`) | Cases |
@@ -65,6 +92,10 @@ specs.
 | `apps/api/src/live/live.gateway.spec.ts`, `apps/api/src/rate-limit/rate-limit.interceptor.spec.ts` | Admin handshake accepted; missing, wrong and user tokens refused. A failing emit is logged, not thrown; admissions, also bypassed, emit `rate:update`; rejections do not; only a first rejection alerts; a failed recording never alerts. |
 | `apps/api/src/rate-limit/rate-limit.store.spec.ts` | The version rises once per admission and is read in the same transaction; the alert flag is keyed by the generation read with the decision. Admin actions increment the version and re-arm the alert where required. |
 | `apps/api/src/admin/admin.controller.spec.ts` | Successful actions wait for the write, then emit the same row they return; failed actions never emit. |
+
+| Browser environment (`npm test`) | Cases |
+| --- | --- |
+| `apps/web/src/live/rows.test.ts`, `apps/web/src/live/useLiveUsers.test.tsx` | Order by window, then version; only a snapshot replaces an equal row; each snapshot trigger; one in flight, one merged follow-up; a newer event beats a slow snapshot; a failed snapshot keeps the rows; a stale alert is dropped; cleanup. |
 
 ## Milestone
 
@@ -84,11 +115,26 @@ It prints `ok`, `40{"sid":"…"}`, the sample body, one
 `42["rate:update",{"cause":"request",…}]` frame (on an empty store `remaining`
 99, `version` 1), then `ok` and `44{"message":"Unauthorized"}`, the refusal.
 
+```sh
+# Second terminal, from the repository root (socket.io-client is installed from here on)
+node --input-type=module -e "import { io } from 'socket.io-client'; io('http://localhost:3000', { auth: { token: 'demo-admin-token' } }).onAny((name, e) => console.log(name, JSON.stringify(e)))"
+# Third terminal
+U=http://localhost:3000; T='Authorization: Bearer demo-token-03'
+curl -s -H "$T" $U/api/sample
+curl -s -X PUT -H 'Authorization: Bearer demo-admin-token' -H 'Content-Type: application/json' -d '{"limit":1}' $U/api/admin/users/user-03/limit
+curl -s -H "$T" $U/api/sample; curl -s -H "$T" $U/api/sample
+```
+
+The watcher prints, for `user-03`: `rate:update` (cause `request`, on an empty
+store `remaining` 99, `version` 1); `rate:update` (cause `limit`, status
+`Exceeded`); one `rate:limit_exceeded` with `retryAt` at the next hour. The last
+call answers 429 and prints nothing. With `npm run dev` and the
+[dashboard](dashboard.md#behavior) signed in, repeat the first request: the
+`user-03` row changes in place, with no request made because of the event.
+
 ## Limits
 
 - Events reach clients connected to this API process only.
-
-- The dashboard, per-user stream filtering and snapshot repair are not present yet.
 
 - Events are not stored, replayed or acknowledged; during a suspension every
   request sends an update, so volume has no bound there.
