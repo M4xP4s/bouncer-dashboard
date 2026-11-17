@@ -133,9 +133,14 @@ async function unregisteredUsers(
   const digests = users.map(({ token }) => tokenDigest(token));
   const knownDigests = await redis.hmGet(REGISTRY_KEYS.users, userIds);
   const tokenOwners = await redis.hmGet(REGISTRY_KEYS.tokens, digests);
-  // A registered ID keeps its token, so only new IDs are checked.
+  // A registered ID keeps its token, so only new IDs are checked. A new ID
+  // that owns its token was registered between the two reads: the watch
+  // fails the write and the batch is read again.
   const taken = users.find(
-    (_, index) => knownDigests[index] === null && tokenOwners[index] !== null,
+    ({ userId }, index) =>
+      knownDigests[index] === null &&
+      tokenOwners[index] !== null &&
+      tokenOwners[index] !== userId,
   );
   if (taken) {
     throw new SeedRefused(

@@ -168,6 +168,24 @@ describe('user registry and paged list', () => {
     expect(await seedRedis.hLen('rl:registry:tokens')).toBe(106);
   });
 
+  it('reads a batch again, and does not refuse it, when another writer registers it between the two reads', async () => {
+    const other = await connectRedis(redisUrl(), 'registry-other');
+    const batch = [{ userId: 'writer-0', token: 'writer-token-0' }];
+    const read = other.hmGet.bind(other);
+    // The first read finds no such user; the second then finds its token held.
+    vi.spyOn(other, 'hmGet').mockImplementationOnce(async (key, fields) => {
+      const reply = await read(key, fields);
+      await seedBatch(seedRedis, batch, ADMIN_TOKEN);
+      return reply;
+    });
+    try {
+      expect(await seedBatch(other, batch, ADMIN_TOKEN)).toBe(0);
+    } finally {
+      await closeRedis(other);
+    }
+    expect(await seedRedis.hLen('rl:registry:tokens')).toBe(7);
+  });
+
   it('refuses a batch whole, keeps earlier batches, and resumes after a correction', async () => {
     const first = { userId: 'new-1', token: 'new-token-1' };
     const second = { userId: 'new-2', token: 'new-token-2' };

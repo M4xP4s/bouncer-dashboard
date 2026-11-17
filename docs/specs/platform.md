@@ -79,7 +79,11 @@ run modes: on the host for development, and in containers. Items are cited as
     ID keeps its token; nothing is removed or reset, so a rerun or a smaller N
     adds nothing. Users are written in batches of at most 100, each one
     transaction watched on a connection of its own and retried at most 10
-    times when another writer changed the registry. A batch with a malformed
+    times when another writer changed the registry. The registry is read in
+    two commands; when another writer registers the same users between them,
+    a new ID appears with its token already held, by that ID itself. That is
+    not a refusal: the watched transaction fails and the batch is read
+    again. A batch with a malformed
     or repeated identity, the admin token, or a token registered to another
     user is refused whole; earlier batches stay, the command prints its
     progress and exits 1, and a rerun resumes. At start-up such a refusal
@@ -242,7 +246,8 @@ Real store (run as in [rate limiting](rate-limiting.md#test-plan)):
 - `apps/api/test/registry.e2e-spec.ts`: 10000 users registered in batches;
   a rerun and a smaller count add nothing and keep tokens, usage and limit;
   a refused batch keeps earlier batches and a corrected rerun resumes; two
-  writers at once register each user once; with no `DEMO_USERS` a registered
+  writers at once register each user once, also when one registers between
+  the other's two reads; with no `DEMO_USERS` a registered
   token works, and an admin token registered as a user's never does.
 - `apps/api/test/outage.e2e-spec.ts`: behind a TCP relay that is stopped,
   and one that is frozen while requests keep arriving, a sample request and
