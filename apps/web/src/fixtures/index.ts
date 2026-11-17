@@ -1,13 +1,10 @@
 /**
- * Example payloads, one for every state the dashboard has to show.
- *
- * The frontend is built and tested against these before the API exists, so
- * they are frozen together with the shared types: a change here needs the
- * same agreement as a change to `@app/contracts`.
+ * Example payloads, one for every state the dashboard has to show. Fixture
+ * mode serves them and the tests read them.
  *
  * Everything is pinned to one moment, 10:42:00 UTC on 2026-11-16, inside
  * the window 10:00 to 11:00. `check.ts` in this folder verifies that the
- * numbers are consistent with each other.
+ * numbers agree with each other.
  */
 import type {
   Analytics,
@@ -18,6 +15,7 @@ import type {
   UserDetail,
   UserRow,
 } from '@app/contracts';
+import { HOUR_MS, MINUTE_MS } from '../lib/time.ts';
 
 /** The moment all fixtures describe. */
 export const NOW = '2026-11-16T10:42:00.000Z';
@@ -289,21 +287,22 @@ export const details: Record<string, UserDetail> = {
   'user-12': { row: row('user-12'), recentRequests: [] },
 };
 
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
+const MINUTE_BUCKETS = 60;
+const HOUR_BUCKETS = 24;
 const nowMs = Date.parse(NOW);
 
 /**
- * `range=hour` for user-06: 60 one-minute buckets, oldest first, ending
- * with the current minute. Quiet until 10:00, then steady traffic, then
+ * `range=hour` for user-06: one-minute buckets, oldest first, ending with
+ * the current minute. Quiet until 10:00, then steady traffic, then
  * rejections in the last two minutes.
  */
 export const historyHour: HistoryBucket[] = Array.from(
-  { length: 60 },
+  { length: MINUTE_BUCKETS },
   (_, index) => {
-    const start = nowMs - (59 - index) * MINUTE;
+    const minutesAgo = MINUTE_BUCKETS - 1 - index;
+    const start = nowMs - minutesAgo * MINUTE_MS;
     const inWindow = start >= Date.parse(WINDOW_START);
-    const lastTwoMinutes = index >= 58;
+    const lastTwoMinutes = minutesAgo < 2;
     return {
       start: new Date(start).toISOString(),
       allowed: inWindow && !lastTwoMinutes ? 2 + (index % 3) : 0,
@@ -312,16 +311,17 @@ export const historyHour: HistoryBucket[] = Array.from(
   },
 );
 
-/** `range=day` for user-06: 24 one-hour buckets ending with this hour. */
+/** `range=day` for user-06: one-hour buckets ending with this hour. */
 export const historyDay: HistoryBucket[] = Array.from(
-  { length: 24 },
+  { length: HOUR_BUCKETS },
   (_, index) => {
-    const start = Date.parse(WINDOW_START) - (23 - index) * HOUR;
-    const workingHours = index >= 14;
+    const hoursAgo = HOUR_BUCKETS - 1 - index;
+    const start = Date.parse(WINDOW_START) - hoursAgo * HOUR_MS;
+    const lastTenHours = hoursAgo < 10;
     return {
       start: new Date(start).toISOString(),
-      allowed: workingHours ? 40 + index * 2 : 0,
-      denied: index === 23 ? 7 : 0,
+      allowed: lastTenHours ? 40 + index * 2 : 0,
+      denied: hoursAgo === 0 ? 7 : 0,
     };
   },
 );

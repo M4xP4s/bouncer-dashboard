@@ -10,15 +10,20 @@ import {
   resetUpdate,
   users,
 } from '../fixtures/index.ts';
+import { SECOND_MS } from '../lib/time.ts';
 import type { Client, ClientOptions } from './client.ts';
 import { HttpError } from './http.ts';
 import type { LiveSocket, SocketEvents } from './socket.ts';
+
+const RESPONSE_DELAY_MS = 150;
+const NOT_FOUND = 404;
 
 export const clock = () => Date.parse(NOW);
 
 export function createClient(options: ClientOptions): Client {
   const rows = new Map(users.map((row) => [row.userId, row]));
 
+  /** Answers with `read()` after the delay; rejects at once when cancelled. */
   function delayed<T>(read: () => T, requestSignal?: AbortSignal): Promise<T> {
     const signal = requestSignal
       ? AbortSignal.any([options.signal, requestSignal])
@@ -28,52 +33,51 @@ export function createClient(options: ClientOptions): Client {
         reject(signal.reason);
         return;
       }
-      const abort = () => {
+      const cancel = () => {
         clearTimeout(timer);
         reject(signal.reason);
       };
       const timer = setTimeout(() => {
-        signal.removeEventListener('abort', abort);
+        signal.removeEventListener('abort', cancel);
         try {
-          signal.throwIfAborted();
           resolve(read());
         } catch (error) {
           reject(error);
         }
-      }, 150);
-      signal.addEventListener('abort', abort, { once: true });
+      }, RESPONSE_DELAY_MS);
+      signal.addEventListener('abort', cancel, { once: true });
     });
   }
 
   function row(id: string): UserRow {
     const found = rows.get(id);
-    if (!found) throw new HttpError('Unknown user.', 404);
+    if (!found) throw new HttpError('Unknown user.', NOT_FOUND);
     return found;
   }
 
-  // Fixture actions acknowledge a new version; they deliberately do not simulate quota policy.
+  // An action only raises the version; quota policy is not simulated here.
   const action = (id: string, signal?: AbortSignal) =>
     delayed(() => {
-      const updated = { ...row(id), version: row(id).version + 1 };
+      const held = row(id);
+      const updated = { ...held, version: held.version + 1 };
       rows.set(id, updated);
       return updated;
     }, signal);
 
+  const detail = (id: string) => ({
+    row: row(id),
+    recentRequests: details[id]?.recentRequests ?? [],
+  });
+
+  const history = (id: string, range: string) => {
+    row(id);
+    return range === 'hour' ? historyHour : historyDay;
+  };
+
   return {
     users: (signal) => delayed(() => [...rows.values()], signal),
-    detail: (id, signal) =>
-      delayed(
-        () => ({
-          row: row(id),
-          recentRequests: details[id]?.recentRequests ?? [],
-        }),
-        signal,
-      ),
-    history: (id, range, signal) =>
-      delayed(() => {
-        row(id);
-        return range === 'hour' ? historyHour : historyDay;
-      }, signal),
+    detail: (id, signal) => delayed(() => detail(id), signal),
+    history: (id, range, signal) => delayed(() => history(id, range), signal),
     analytics: (signal) => delayed(() => analytics, signal),
     reset: action,
     setLimit: (id, _body, signal) => action(id, signal),
@@ -83,6 +87,7 @@ export function createClient(options: ClientOptions): Client {
   };
 }
 
+/** A stand-in socket that connects, then plays three events and stops. */
 export function openSocket(): LiveSocket {
   const listeners: { [K in keyof SocketEvents]: Set<SocketEvents[K]> } = {
     connect: new Set(),
@@ -91,19 +96,21 @@ export function openSocket(): LiveSocket {
     'rate:update': new Set(),
     'rate:limit_exceeded': new Set(),
   };
+  const updates = listeners['rate:update'];
+  const alerts = listeners['rate:limit_exceeded'];
   const timers = [
-    setTimeout(() => listeners.connect.forEach((fn) => fn()), 0),
+    setTimeout(() => listeners.connect.forEach((notify) => notify()), 0),
     setTimeout(
-      () => listeners['rate:update'].forEach((fn) => fn(requestUpdate)),
-      2_000,
+      () => updates.forEach((notify) => notify(requestUpdate)),
+      2 * SECOND_MS,
     ),
     setTimeout(
-      () => listeners['rate:update'].forEach((fn) => fn(resetUpdate)),
-      4_000,
+      () => updates.forEach((notify) => notify(resetUpdate)),
+      4 * SECOND_MS,
     ),
     setTimeout(
-      () => listeners['rate:limit_exceeded'].forEach((fn) => fn(limitExceeded)),
-      6_000,
+      () => alerts.forEach((notify) => notify(limitExceeded)),
+      6 * SECOND_MS,
     ),
   ];
   return {
@@ -114,8 +121,6 @@ export function openSocket(): LiveSocket {
     off: (event, listener) => {
       listeners[event].delete(listener);
     },
-    disconnect: () => {
-      timers.forEach(clearTimeout);
-    },
+    disconnect: () => timers.forEach(clearTimeout),
   };
 }

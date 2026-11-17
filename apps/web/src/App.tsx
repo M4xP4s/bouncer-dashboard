@@ -9,15 +9,23 @@ import {
   Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import type { RateLimitExceededEvent } from '@app/contracts';
 import { type Connection, useLiveUsers } from './live/useLiveUsers.ts';
-import { utcTime } from './lib/time.ts';
+import { SECOND_MS, utcTime } from './lib/time.ts';
 import { useSession, type Session } from './api/useSession.ts';
 
-// Kept for the browser session only: closing the tab forgets it.
+// In sessionStorage: closing the tab forgets the token.
 const TOKEN_KEY = 'adminToken';
+const ALERT_VISIBLE_MS = 5 * SECOND_MS;
+
+const CONNECTION_TEXT: Record<Connection, string> = {
+  connecting: 'Connecting…',
+  live: 'Live',
+  disconnected: 'Disconnected, reconnecting…',
+};
 
 // A browser that blocks site data throws on every storage call. The token
-// is then kept in memory only and is asked for again after a reload.
+// then lives in memory only and is asked for again after a reload.
 function storedToken(): string {
   try {
     return sessionStorage.getItem(TOKEN_KEY) ?? '';
@@ -26,13 +34,29 @@ function storedToken(): string {
   }
 }
 
-function storeToken(token: string | null): void {
+function storeToken(token: string): void {
   try {
-    if (token === null) sessionStorage.removeItem(TOKEN_KEY);
-    else sessionStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.setItem(TOKEN_KEY, token);
   } catch {
-    // Nothing to do: see above.
+    // Blocked storage: see storedToken.
   }
+}
+
+function forgetToken(): void {
+  try {
+    sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Blocked storage: see storedToken.
+  }
+}
+
+function showLimitAlert(event: RateLimitExceededEvent): void {
+  notifications.show({
+    title: `Limit exceeded: ${event.row.userId}`,
+    message: `Retry at ${utcTime(event.retryAt)}`,
+    color: 'red',
+    autoClose: ALERT_VISIBLE_MS,
+  });
 }
 
 /** Token gate and layout. The rows live in `useLiveUsers`. */
@@ -45,9 +69,9 @@ export default function App() {
     setRefused(false);
     setToken(entered);
   };
-  // Stable, because the socket's effect depends on it.
+  // Stable, because the session's effect depends on it.
   const refuse = useCallback(() => {
-    storeToken(null);
+    forgetToken();
     setRefused(true);
     setToken('');
   }, []);
@@ -97,13 +121,6 @@ function TokenForm({
   );
 }
 
-/** Announce connection changes; the frequently changing timestamp stays outside the live region. */
-function connectionText(connection: Connection) {
-  if (connection === 'connecting') return 'Connecting…';
-  if (connection === 'disconnected') return 'Disconnected, reconnecting…';
-  return 'Live';
-}
-
 function Dashboard({
   token,
   onRefused,
@@ -117,30 +134,36 @@ function Dashboard({
 }
 
 function DashboardContent({ session }: { session: Session }) {
-  const live = useLiveUsers(session, (event) =>
-    notifications.show({
-      title: `Limit exceeded: ${event.row.userId}`,
-      message: `Retry at ${utcTime(event.retryAt)}`,
-      color: 'red',
-      autoClose: 5000,
-    }),
-  );
-  const { connection, lastUpdateAt } = live;
+  const live = useLiveUsers(session, showLimitAlert);
   return (
-    <>
-      <Group justify="space-between" mb="md">
-        <Title order={1}>Rate limits</Title>
-        <Group gap="xs">
-          <Text role="status" c={connection === 'live' ? 'green' : 'orange'}>
-            {connectionText(connection)}
-          </Text>
-          <Text>
-            {lastUpdateAt
-              ? `Last update ${utcTime(lastUpdateAt)}`
-              : 'No update yet'}
-          </Text>
-        </Group>
-      </Group>
-    </>
+    <Group justify="space-between" mb="md">
+      <Title order={1}>Rate limits</Title>
+      <ConnectionStatus
+        connection={live.connection}
+        lastUpdateAt={live.lastUpdateAt}
+      />
+    </Group>
+  );
+}
+
+function ConnectionStatus({
+  connection,
+  lastUpdateAt,
+}: {
+  connection: Connection;
+  lastUpdateAt: string | null;
+}) {
+  const lastUpdate = lastUpdateAt
+    ? `Last update ${utcTime(lastUpdateAt)}`
+    : 'No update yet';
+  // Only the connection is a live region: the time changes too often to
+  // be announced.
+  return (
+    <Group gap="xs">
+      <Text role="status" c={connection === 'live' ? 'green' : 'orange'}>
+        {CONNECTION_TEXT[connection]}
+      </Text>
+      <Text>{lastUpdate}</Text>
+    </Group>
   );
 }

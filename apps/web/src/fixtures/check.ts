@@ -1,12 +1,7 @@
 /**
- * Consistency check for the fixtures: `node apps/web/src/fixtures/check.ts`
- * (part of `npm run check:contracts`).
- *
- * The compiler already checks that the fixtures have the right shape. This
- * checks that the numbers agree with the documented quota rules.
- * It restates those rules on purpose: it is the
- * independent answer the hand-written numbers are compared with, and it is
- * never used by the application.
+ * Checks that the fixture numbers agree with the quota rules. It restates
+ * those rules on purpose: it is the independent answer the hand-written
+ * numbers are compared with, and the application never uses it.
  */
 import type { Status, UserRow } from '@app/contracts';
 import {
@@ -21,6 +16,7 @@ import {
   RESET_AT,
   WINDOW_START,
 } from './index.ts';
+import { HOUR_MS, MINUTE_MS } from '../lib/time.ts';
 
 let checks = 0;
 const check = (condition: boolean, message: string): void => {
@@ -28,8 +24,12 @@ const check = (condition: boolean, message: string): void => {
   if (!condition) throw new Error(`fixture check failed: ${message}`);
 };
 
-const expectedStatus = (used: number, total: number): Status =>
-  used >= total ? 'Exceeded' : used * 10 >= total * 9 ? 'Warning' : 'OK';
+// Warning from 90% of the total, compared in integers.
+function expectedStatus(used: number, total: number): Status {
+  if (used >= total) return 'Exceeded';
+  if (used * 10 >= total * 9) return 'Warning';
+  return 'OK';
+}
 
 const checkRow = (row: UserRow, label: string): void => {
   check(row.total === row.limit + row.extra, `${label}: total`);
@@ -132,7 +132,7 @@ check(historyHour.length === 60, 'historyHour: 60 buckets');
 check(
   evenlySpaced(
     historyHour.map((bucket) => bucket.start),
-    60_000,
+    MINUTE_MS,
   ),
   'historyHour: spacing',
 );
@@ -140,7 +140,7 @@ check(historyDay.length === 24, 'historyDay: 24 buckets');
 check(
   evenlySpaced(
     historyDay.map((bucket) => bucket.start),
-    3_600_000,
+    HOUR_MS,
   ),
   'historyDay: spacing',
 );
