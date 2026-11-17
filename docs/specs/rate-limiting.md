@@ -104,7 +104,27 @@ Mocked store (`vitest-mock-extended`), no Redis, in `apps/api/src/`:
   `sample/sample.controller.spec.ts`: headers, 429, 503, events; bookkeeping
   defects propagate for both admitted and denied requests without running the handler.
 - `rate-limit/row.spec.ts`: status around the 90% line, limits 100 and 11.
-- `rate-limit/keys.spec.ts`: a millisecond around the boundary; expiry.
+- `rate-limit/keys.spec.ts`: a millisecond around the boundary, also for the
+  window key; expiry.
+
+Real store, in `apps/api/test/`, started with the whole application (the
+command is in the [README](../../README.md#commands); the suite empties the
+database it uses):
+- `admission.e2e-spec.ts`: `x-count` 99 down to 0, then the 429; the quota
+  changes exactly at the UTC hour ([P25]); one user's exhaustion leaves
+  another's quota; a failing handler still counts; a 401 and a spoofed ID
+  count nothing.
+- `concurrency.e2e-spec.ts`: 200 concurrent requests admit exactly 100 with
+  distinct `x-count` values ([P24]); a reset or a grant between two batches
+  keeps every later admission; during 1000 rejections, 20 requests of
+  another user take under 1 s each, a loose smoke bound ([P7]); every
+  snapshot pairs usage and version.
+- `store-races.e2e-spec.ts`: clocks on both sides of an hour admit at most
+  one cap per hour; a skipped rejection cleanup only lowers capacity, until
+  a reset; recent requests are ordered by time and ID, not by completion.
+- `expiry.e2e-spec.ts`: every key written has the expiry of its rule ([P9]);
+  a suspension and an hour that end while idle change the snapshot at the
+  same version; a record leaves the detail at exactly 24 h.
 
 ## Milestone
 

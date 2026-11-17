@@ -86,6 +86,18 @@ Mocked store (`vitest-mock-extended`; the test supplies the time):
   and row read in the action's transaction; history buckets.
 - `apps/api/src/admin/analytics.spec.ts`: near-limit share, ranking, idle zero.
 
+Real store, in `apps/api/test/` (run as in
+[rate limiting](rate-limiting.md#test-plan)):
+- `admin-behavior.e2e-spec.ts`: reset clears usage and grant and keeps the
+  limit; a lower limit keeps usage; a grant adds its slots and ends with the
+  hour; a suspension bypasses, is counted, and ends on expiry or on request.
+- `admin-http.e2e-spec.ts`: bad input and unknown users change nothing; every
+  route and the socket refuse a missing and a user token; an ID with
+  uppercase, `_` and `-` survives every route ([P11]).
+- `read-model.e2e-spec.ts`: snapshot, detail, `x-count` and analytics agree;
+  the top users are ranked by usage alone; histories include the previous
+  hour and zero-filled buckets; recent requests stay capped at 100.
+
 ## Milestone
 
 With a fresh Redis (`docker compose up -d redis`), `cp .env.example .env` and
@@ -116,6 +128,7 @@ from admission; analytics reads rows and the daily count in separate
 transactions. List and analytics read all configured users.
 
 [P4]: ../PITFALLS.md#p4-a-near-limit-figure-that-drops-when-users-get-blocked
+[P11]: ../PITFALLS.md#p11-a-user-id-that-is-not-one-plain-string
 [P12]: ../PITFALLS.md#p12-a-temporary-suspension-that-never-ends
 [P13]: ../PITFALLS.md#p13-usage-base-limit-and-grant-in-one-number
 [P14]: ../PITFALLS.md#p14-a-reset-that-resets-the-policy-and-not-the-usage

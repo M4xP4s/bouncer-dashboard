@@ -112,8 +112,8 @@ Unit, no Redis (`npm test`):
   fails on a closed port, and on a peer that accepts and never answers.
 
 Rule 4: the handshake cases are in the test plan of
-[live updates](live-updates.md#test-plan). Gap: the admin routes do not exist
-yet; their cases are added with them.
+[live updates](live-updates.md#test-plan); a missing and a user token on
+every admin route are in that of the [admin API](admin-api.md#test-plan).
 
 ## Milestone
 
