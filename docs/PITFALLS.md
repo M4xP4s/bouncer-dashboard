@@ -1,8 +1,10 @@
 # Pitfalls
 
 Ways a flawed implementation of a per-user rate limiter with a live
-administration dashboard goes wrong. They were collected before the design
-was written and are read before any part of it is designed or changed.
+administration dashboard goes wrong. P1 to P25 were collected before the
+design was written; P26 onwards were added as faults of these kinds came up
+during implementation and review. All are read before any part of the system
+is designed or changed.
 
 An item is listed only when it concerns something this repository builds.
 Each one names the fault, the rule that prevents it here and a check planned
@@ -464,3 +466,134 @@ supply the time.
 before, at and one millisecond after, with the time supplied by the test.
 Unit test: a clock that moves on after the decision does not change the time
 at which its outcome is recorded.
+
+## Store failures
+
+### P26. A store that accepts the connection and never answers
+
+A refused connection fails at once and is easy to handle. A flawed
+implementation handles only that case. A connect timeout bounds the TCP
+connection, not the replies, so a store that accepts and then stays silent
+leaves startup pending and every request waiting, with no error raised.
+
+**Guard:** the API does not listen until the store has answered, and a
+connection silent for longer than a fixed bound is closed, at startup and
+afterwards. The bound is on silence, not on total time: a peer that trickles
+an unfinished reply can keep startup pending longer, and the specification
+says so.
+**Check:** unit test: a peer that accepts and never answers fails startup
+within seconds. Real store: requests to a frozen server answer 503 within a
+bound, and the API serves again when the server does, without a restart.
+
+### P27. Measuring silence with the wall clock
+
+```ts
+const silentFor = Date.now() - lastReplyAt // jumps when the system clock is set
+if (silentFor > SILENCE_LIMIT_MS) client.destroy() // a healthy connection is dropped
+```
+
+A flawed watchdog measures silence with the wall clock. When the system
+clock is set forward it sees minutes of silence and drops a healthy
+connection; set back, it misses a real one.
+
+**Guard:** elapsed time is measured on a monotonic clock. The wall clock is
+used only where a calendar time is meant, such as the hour of a window.
+**Check:** unit test: the wall clock jumps forward while replies keep
+arriving, and the connection is kept.
+
+### P28. A broken key reported as an outage
+
+```ts
+try {
+  return await transaction.exec()
+} catch (cause) {
+  throw new StoreUnavailable(cause) // a WRONGTYPE reply says "retry later", for ever
+}
+```
+
+A flawed transaction wrapper turns every rejection into "store unavailable".
+The store's own error reply, such as a command run on a key of the wrong
+type, then reaches the client as a 503 that invites a retry, although every
+retry fails the same way. This is P8 one layer lower: the catch is narrow,
+but what it catches is not.
+
+**Guard:** an error reply from the store is a defect: it is logged and
+becomes a 500. Only a lost or timed-out connection becomes a 503.
+**Check:** mocked store: an error reply inside the transaction gives 500,
+and a lost connection gives 503. Real store: a key of the wrong type on the
+admission path gives 500.
+
+## Wiring, checks and claims
+
+### P29. A part tested on its own and never wired in
+
+A flawed implementation unit-tests an exception filter, a guard or a
+Socket.IO adapter in isolation, and the test passes while the application
+never registers it. The same blindness affects a verification script: a
+two-process check that still passes with the cross-process wiring removed
+shows nothing about that wiring.
+
+**Guard:** each registration point is exercised through the assembled
+application, and every check that claims to prove some wiring has been seen
+to fail with that wiring removed.
+**Check:** an error raised in a route reaches the client in the filter's
+envelope; with the adapter not registered, the two-process check reports a
+missing event at one of the dashboards.
+
+### P30. Test files the compiler never sees
+
+The build excludes test files and the test runner strips types without
+checking them. A flawed setup therefore accepts a test that uses an API the
+target does not provide, or a fixture of the wrong shape, while build, lint
+and tests all pass.
+
+**Guard:** every test file is type-checked by a documented command: the
+API's test command checks its tests before running them, and the
+dashboard's build checks its tests together with its sources.
+**Check:** a test that uses an API newer than the compile target fails one
+of those commands, not only an editor.
+
+### P31. Removing tests judged redundant by reading them
+
+A test that looks covered by another, for example "the guard is shared, so
+one route is enough", is often the only one that fails for a realistic
+defect: a route that accepts the wrong kind of token, or a limit that the
+admission step ignores. A flawed clean-up removes such tests on the strength
+of reading, and a mutation tool that reports nothing lost does not show
+otherwise.
+
+**Guard:** a test is removed only when a remaining test fails for the same
+realistic defect, shown by writing that defect into the code. "The guard is
+shared" alone keeps one case per route or action.
+**Check:** for each removed case, the defect it was written for is
+introduced once and the remaining suite fails.
+
+### P32. A document that claims more than the code does
+
+A flawed submission describes the system it intends to have. Typical
+sentences: "a rejection consumes no quota" when it holds only if the
+rejection's cleanup succeeds; "one transaction per request" when admission
+and its bookkeeping are two; "several processes share one limit" with no
+check that runs two; "an alert is sent once per window" when admin actions
+re-arm it.
+
+**Guard:** a sentence in a README, a specification or a diagram describes
+the code at the same commit, in present tense only once it exists, and
+states the condition under which it holds. A planned part is labelled
+planned.
+**Check:** at each point of the
+[requirements check](README.md#requirements-check), every claim the change
+touches is read against the code and the checks of that commit.
+
+### P33. A status that only its colour can tell
+
+The status column is read at a glance, often from its colour alone. A
+flawed implementation keeps a component library's default text colour on
+coloured badges, which leaves white text on light fills well below a
+readable contrast.
+
+**Guard:** filled badges and buttons choose black or white text by the
+fill's luminance at the point where both give the same contrast, so every
+fill exceeds 4.5:1, and the status is also written as a word.
+**Check:** browser environment: the rendered colours of each status badge,
+the connection state and dimmed text are measured, not the theme's values.
