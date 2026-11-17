@@ -24,14 +24,22 @@ npm ci
 npm run build
 npm run lint
 npm test                            # needs nothing running
+npm run check:contracts             # the fixture data against its own rules
 ```
 
-To run the API on the host:
+To run the API and the dashboard on the host:
 
 ```sh
 docker compose up -d redis          # Redis on 127.0.0.1:6379
 cp .env.example .env                # demo values; each one is explained there
-npm run start:dev -w apps/api       # http://localhost:3000
+npm run dev                         # API on :3000, dashboard on http://localhost:5173
+```
+
+`npm run start:dev -w apps/api` starts the API alone. The dashboard also runs
+without an API, on fixture data:
+
+```sh
+VITE_FIXTURES=1 npm run dev -w apps/web
 ```
 
 ## Documentation
