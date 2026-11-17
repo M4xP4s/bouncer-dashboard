@@ -205,9 +205,10 @@ export function startLiveSession(
     },
   });
 
+  // Hidden: aiming again cancels the alarm, as a hidden page waits for none.
   function onVisibilityChange(): void {
     if (pageVisible()) reconcile();
-    else if (active()) alarm.aim(held.rows);
+    else alarm.aim(held.rows);
   }
   document.addEventListener('visibilitychange', onVisibilityChange);
 
