@@ -18,8 +18,10 @@ expectations.
    (Core feature 1; Core feature 3)
 2. `rate:limit_exceeded` is sent for a user's first rejection in a window
    ([P6]). A reset, an extra grant and every successful limit save, even to a
-   lower or equal value, allow one more; a suspension does not. If recording the
-   rejection fails, the 429 stands without an alert. (Core feature 1; Backend 6)
+   lower or equal value, allow one more; a suspension does not. A bookkeeping
+   outage preserves the 429 without an alert; an error reply or defect gives 500
+   without an event ([rate limiting, rule 10](rate-limiting.md#behavior)).
+   (Core feature 1; Backend 6)
 3. Both payloads carry the full row, built by the function that builds the HTTP
    row; an action's event row equals its response row. (Core feature 1;
    Expectation: performance)

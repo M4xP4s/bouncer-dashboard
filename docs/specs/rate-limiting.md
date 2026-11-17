@@ -35,14 +35,21 @@ reliability, cited (Backend 5), (Core feature 1), (Expectation: reliability).
    the effective cap), `retryAt` (the next boundary),
    `retryAfterSeconds`. **Addition:** `Retry-After`, whole seconds rounded up,
    at least 1. (Backend 6)
-9. If the store is unavailable (Redis down, or its transaction fails) the answer
-   is 503 "The request was not processed. It may be retried." without `x-count`,
-   and the handler does not run; the message claims nothing about the quota. No
-   retry and no per-process fallback (it would allow the cap once per process).
-   Any other error is a 500. (Expectation: reliability; [P8])
+9. During admission, a disconnected client or a transaction rejection that is
+   not the Redis client's `ErrorReply` becomes `StoreUnavailable`: 503 "The
+   request was not processed. It may be retried." without `x-count`, and no
+   handler runs. A Redis `ErrorReply` (including `MultiErrorReply`) propagates
+   to the generic 500 handler; its details are logged, not returned. Neither
+   response promises that quota was untouched. No retry or per-process fallback.
+   Errors outside transaction execution remain 500. (Expectation: reliability; [P8])
 10. Bookkeeping, a second transaction before the handler, removes a rejected
-    entry and records the outcome; its failure never changes the answer.
-    Admitted requests emit `rate:update`; a rejection emits
+    entry and records the outcome. `StoreUnavailable` is logged and preserves
+    the admission or 429; a rejected request emits no alert in that case.
+    An `ErrorReply` or other defect instead produces a generic 500 without
+    `x-count`, handler execution or events, even after admission or denial.
+    Completed Redis writes are not rolled back and admitted quota is not refunded.
+    When bookkeeping succeeds or only the store is unavailable,
+    admitted requests emit `rate:update`; a rejection emits
     `rate:limit_exceeded` only as the first for its user, window and re-arm
     generation ([live-updates](live-updates.md#behavior)).
     (Core feature 1; [P6], [P7])
@@ -81,12 +88,21 @@ entries stay until removed or expired.
 hour allows twice the cap across a boundary and needs synchronized clocks. Keys
 expire an hour late so a slow clock never counts 1 on a deleted key.
 
+**Error classification (2026-11-17).** Classify by the client's error type in
+one transaction wrapper: a server error reply is surfaced as 500; other
+execution failures are treated as unavailable. This avoids labelling wrong-type
+keys as an outage. Parsing message prefixes would couple policy to error text;
+a larger catalogue of transient replies is deferred. Bookkeeping tolerates
+unavailability, but exposes error replies and defects rather than hiding them.
+
 ## Test plan
 
 Mocked store (`vitest-mock-extended`), no Redis, in `apps/api/src/`:
-- `rate-limit/rate-limit.store.spec.ts`: cap, bypass, command order, outage.
+- `rate-limit/rate-limit.store.spec.ts`: cap, bypass, command order, outage;
+  admission and bookkeeping preserve Redis error replies unwrapped.
 - `rate-limit/rate-limit.interceptor.spec.ts`,
-  `sample/sample.controller.spec.ts`: headers, 429, 503, events.
+  `sample/sample.controller.spec.ts`: headers, 429, 503, events; bookkeeping
+  defects propagate for both admitted and denied requests without running the handler.
 - `rate-limit/row.spec.ts`: status around the 90% line, limits 100 and 11.
 - `rate-limit/keys.spec.ts`: a millisecond around the boundary; expiry.
 
@@ -109,6 +125,13 @@ deadline is promised. A paused server can keep requests pending under traffic:
 the socket timeout measures inactivity, and writes restart it.
 
 ## Limits
+
+All Redis error replies become 500, including potentially temporary `LOADING`,
+`BUSY`, `READONLY` and out-of-memory replies. Conversely, a non-`ErrorReply`
+execution failure is classified as unavailable without proving it is temporary.
+A bookkeeping error reply can replace a planned success or 429 with 500 after
+quota or telemetry writes have already happened; there is no rollback or retry.
+
 
 Mocked-store tests cannot show shared-store atomicity. A boundary burst of twice
 the cap is possible; bypassed requests and a failed cleanup leave entries above
