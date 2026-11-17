@@ -39,18 +39,25 @@ expectations.
 7. Of two rows of one user the newer has the later `resetAt`, then the higher
    `version`. An event, an action's response or a detail response replaces the
    held row only if strictly newer, so they may arrive in either order and a
-   repeat changes nothing ([P19]). A `rate:limit_exceeded` that is not newer is
+   repeat changes nothing ([P19]). One exception: the detail response of the
+   user selected when it arrives, read with its version in one transaction,
+   also replaces an equal row that differs, but only while that user is not
+   on the page on screen. Otherwise the order, window then version, holds for
+   every source. A row on the page is replaced only by a newer one or by the
+   page's snapshot (rule 8). A `rate:limit_exceeded` that is not newer is
    dropped whole, alert included. (Core feature 1; Expectation: reliability)
-8. An event never causes a request. A snapshot (the user list of
-   [admin-api](admin-api.md#interface)) replaces a held row unless the held one
-   is newer, so it also replaces an equal row that differs, repairing an ended
-   suspension or a removed rejected entry. Snapshots run one at a time, requests
-   meanwhile merge into one follow-up, a failed one keeps the rows. (Core
-   feature 1; Expectation: reliability)
+8. An event never causes a request. A snapshot (the page of the user list on
+   screen, [admin-api](admin-api.md#interface)) replaces a held row unless the
+   held one is newer, so it also replaces an equal row that differs, repairing
+   an ended suspension or a removed rejected entry. Snapshots run one at a
+   time, requests meanwhile merge into one follow-up, a failed one keeps the
+   rows. (Core feature 1; Expectation: reliability)
 9. A snapshot is requested on every (re)connect, after a failed admin action,
    when the page becomes visible and, only while visible, at the next reset time
-   of a held row and every 10 seconds. (Core feature 1; Expectation:
-   reliability)
+   of a held row and every 10 seconds. The 10 seconds are a cadence while the
+   page is visible and reads succeed, not a bound on a row's age: in a hidden
+   tab, behind a read still pending or after a failed one, a row stays older.
+   (Core feature 1; Expectation: reliability)
 10. "Last update" is the `at` of the last applied event or the time of the last
     successful snapshot; connecting alone does not set it. (Core feature 1)
 11. One hook owns the socket, removes the callbacks and timers it added and
@@ -60,6 +67,20 @@ expectations.
     is logged and never fails a request or ends the process; after a Redis
     outage, relaying resumes without a restart. (Expectation: scalability;
     Expectation: reliability)
+13. The dashboard holds the rows of the page on screen and of the selected
+    user only, and the requests events carry only for the selected user, the
+    newest 100. An event for anyone else is checked and may alert, but
+    nothing of it is kept. Every dashboard still receives every event (rule
+    5): this bounds memory, not traffic. (Expectation: scalability; [P9])
+14. A new page or filter keeps the socket, cancels the page read in flight
+    and drops the rows that are not on the new page, the selected user's
+    excepted; a response for an older page or filter is dropped ([P22]).
+    While a page not yet shown is read, events are kept, the newest per user
+    for at most 100 users, and applied over the response; an event of a
+    further user is dropped. Once the page is shown, an event changes a row
+    only for a user on that page; a user who now matches the filter, or no
+    longer does, joins or leaves the page at the next successful snapshot.
+    (Core feature 1; Expectation: reliability)
 
 ## Interface
 
@@ -90,7 +111,20 @@ is newer, and a new hour changes a row with no event, so the window comes first.
 Only a snapshot, read with its version in one transaction, may replace an equal
 row. Last arrival wins undoes a newer event; cancelling a snapshot can starve
 the display. Cost: a read every 10 seconds per visible dashboard (unmeasured),
-and that long a stale row for changes no event carries. Cases: browser tests.
+and a stale row until the next successful snapshot for changes no event
+carries, including a filtered page whose members no longer match. A user past
+the 100 kept while a new page is read shows the page's row until their next
+event or the next snapshot; reading again would let events cause reads.
+Cases: browser tests.
+
+**The selected user's detail repairs it off the page.** With pages, the
+selected user may be on no page the dashboard reads, so no snapshot would ever
+repair an ended suspension or a removed rejected entry for that user; before
+pages, every user was in the snapshot. The detail response is read with its
+version in one transaction, like a snapshot, so it may replace an equal row
+for that user only while the user is off the page. Alternative: render the
+detail panel from the detail response alone, which splits one user's state in
+two places. Cost: one more case in the ordering rule.
 
 **Socket.IO Redis adapter.** A dashboard connected to one API process must see
 the decisions of another ([P20]). The adapter publishes every emit on Redis and
@@ -116,7 +150,7 @@ unreachable is lost. Cases: the delivery rows of the test plan.
 
 | Browser environment (`npm test`) | Cases |
 | --- | --- |
-| `apps/web/src/live/rows.test.ts`, `apps/web/src/live/useLiveUsers.test.tsx` | Order by window, then version; only a snapshot replaces an equal row; each snapshot trigger; one in flight, one merged follow-up; a newer event beats a slow snapshot; a failed snapshot keeps the rows; a stale alert is dropped; cleanup. |
+| `apps/web/src/live/rows.test.ts`, `apps/web/src/live/useLiveUsers.test.tsx` | Order by window, then version; only a snapshot replaces an equal row; each snapshot trigger; one in flight, one merged follow-up; a newer event beats a slow snapshot; a failed snapshot keeps the rows; a stale alert is dropped; cleanup. A new page keeps the socket and drops the old page's response; events during a read are applied over it, and no number of them causes a read; a user past 100 keeps the response row until their next event; off-page events keep nothing; the selected user stays across pages; an equal-version detail response repairs the selected user off the page (an ended suspension), an older one arriving late does not, and an equal one does not replace an on-page row. |
 | `apps/web/src/App.test.tsx`, `apps/web/src/assembled.test.tsx` | Connecting sets no update time; an event or a snapshot moves it. |
 
 | Real store ([how to run](rate-limiting.md#test-plan)) | Cases |
@@ -180,8 +214,14 @@ and the exit code is 0.
   neither provided nor tested.
 - Delivery across processes is shown on two processes of one host and one
   Redis, not under load. No throughput or latency figure is measured.
+- Every event reaches every dashboard, whatever page it shows, so event
+  traffic grows with the requests of all users.
 - Events are not stored, replayed or acknowledged; during a suspension every
   request sends an update, so volume has no bound there.
+- A repeated or stale `rate:limit_exceeded` for a user whose row is not held
+  has nothing to be compared with, so it can show the alert again. A held row
+  still drops it (rule 7), and the server sends one alert per generation
+  (rule 2); the dashboard keeps no record of alerts shown.
 
 [P1]: ../PITFALLS.md#p1-renaming-what-the-brief-names
 [P6]: ../PITFALLS.md#p6-rejections-that-multiply-work

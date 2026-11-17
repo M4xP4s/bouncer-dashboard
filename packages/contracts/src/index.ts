@@ -92,7 +92,7 @@ export interface TopUser {
 
 /** Body of `GET /api/admin/analytics`. */
 export interface Analytics {
-  /** All seeded users. */
+  /** All registered users. */
   totalUsers: number;
   /** Users with at least one counted request in the current window. */
   activeUsers: number;
@@ -105,7 +105,7 @@ export interface Analytics {
   denied429Today: number;
   /** The UTC date `denied429Today` refers to, as YYYY-MM-DD. */
   day: string;
-  /** Up to five users with the highest `used`; equal users in no defined order. */
+  /** Up to five users with the highest `used`; equal usage by user ID. */
   topUsers: TopUser[];
 }
 

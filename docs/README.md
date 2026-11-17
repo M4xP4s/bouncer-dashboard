@@ -112,10 +112,10 @@ Specifications are listed here as they are introduced.
 
 | Specification | Covers |
 | --- | --- |
-| [Platform](specs/platform.md) | The workspace, start-up configuration, who a caller is, the Redis connection, the health route, the error response and the run modes. |
+| [Platform](specs/platform.md) | The workspace, start-up configuration, who a caller is, the user registry, the Redis connection, the health route, the error response and the run modes. |
 | [Rate limiting](specs/rate-limiting.md) | UTC windows, atomic admission, quota headers and errors. |
 | [Live updates](specs/live-updates.md) | Authenticated socket events, versioning, alert suppression and delivery across API processes. |
-| [Admin API](specs/admin-api.md) | Authenticated actions, snapshots, activity history and analytics. |
+| [Admin API](specs/admin-api.md) | Authenticated actions, the paged user list, snapshots, activity history and analytics. |
 | [Dashboard](specs/dashboard.md) | The admin page: session, checked API client, live user state, fixture mode, the table with search and filters, user detail and history, admin controls and analytics cards. |
 
 ### Quality navigation
@@ -132,5 +132,5 @@ row has no section yet.
 | Security | [Platform: behavior](specs/platform.md#behavior), [Platform: limits](specs/platform.md#limits) |
 | Maintainability | [Platform: behavior](specs/platform.md#behavior), [Platform: decisions](specs/platform.md#decisions) |
 | Architecture | [Rate limiting: decisions](specs/rate-limiting.md#decisions), [Live updates: decisions](specs/live-updates.md#decisions) |
-| Scalability | [Rate limiting: limits](specs/rate-limiting.md#limits), [Live updates: limits](specs/live-updates.md#limits) |
-| Performance | [Rate limiting: decisions](specs/rate-limiting.md#decisions), [Live updates: decisions](specs/live-updates.md#decisions) |
+| Scalability | [Rate limiting: limits](specs/rate-limiting.md#limits), [Live updates: limits](specs/live-updates.md#limits), [Platform: decisions](specs/platform.md#decisions), [Admin API: decisions](specs/admin-api.md#decisions), [Admin API: limits](specs/admin-api.md#limits) |
+| Performance | [Rate limiting: decisions](specs/rate-limiting.md#decisions), [Live updates: decisions](specs/live-updates.md#decisions), [Admin API: decisions](specs/admin-api.md#decisions) |

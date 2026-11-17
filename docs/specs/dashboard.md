@@ -26,8 +26,8 @@ and [live updates](live-updates.md#behavior).
    total or status ([P3]). (Expectation: reliability; Expectation: security)
 4. **Live state.** One hook per session owns the socket and rows and applies
    events and snapshots as [live updates](live-updates.md#behavior) orders;
-   events cause no request and unmounting removes only its own listeners
-   ([P21]). The header shows "Connecting…", "Live" or "Disconnected,
+   it keeps the socket while the page or filters change, events cause no
+   request and unmounting removes only its own listeners ([P21]). The header shows "Connecting…", "Live" or "Disconnected,
    reconnecting…" and, apart, "Last update HH:MM:SS UTC" or "No update yet"
    ([P20]). An accepted `rate:limit_exceeded` also shows a red notification,
    "Limit exceeded: <id>", with "Retry at HH:MM:SS UTC", for 5 seconds.
@@ -35,21 +35,32 @@ and [live updates](live-updates.md#behavior).
 5. **Fixture mode.** With `VITE_FIXTURES=1` in development no API is needed:
    any token opens the page, data answers after 150 ms, a stand-in socket
    connects, sends `rate:update` at 2 and 4 s and `rate:limit_exceeded` at 6 s,
-   and actions only raise a version. A production build holds none of it;
+   and actions only raise a version. Its 12 rows are filtered and paged as
+   the [admin API](admin-api.md#behavior) does. A production build holds none of it;
    `npm run check:contracts` fails if the data breaks its rules.
    (Expectation: maintainability)
 6. **Table.** Plain string order of the ID, exactly the headers User ID,
    Remaining / Total, Reset Time, Status and Last Request ([P1]); the server's
    values, minutes to reset ("11:00:00 UTC (18m)"), a suspension note, "Never"
    for no request; "Loading users…", an error over held rows, "No users match
-   the filters." (Core feature 1)
+   the filters." **Interpretation** of "Live User Table: Displays" for a
+   population of any size: the table shows the page the server cut,
+   "Users per page" 25, 50 (default) or 100, with "First page", "Previous
+   page", "Next page" and "Last page" buttons, "Page P of N · T matching
+   users" and the time of the read, so every user is reachable by page or
+   search. A changed filter or page size starts at page 1; a refresh that
+   leaves the page past the last returns to page 1. (Core feature 1;
+   Expectation: scalability)
 7. **Search and filters.** "Search user ID" (case-insensitive substring),
-   "Status" (Any, OK, Warning, Exceeded) and "Last active" combine.
+   "Status" (Any, OK, Warning, Exceeded) and "Last active" combine and are
+   applied by the server to every registered user before the page is cut.
    **Interpretation** of "Exceeded = 100%, Warning >= 90%, OK <= 90%": the
    ranges overlap at 90%; the filter uses the server's status.
    **Interpretation** of "last active time": Any time, Last 5 minutes, Last
-   hour or Last 24 hours before the latest refresh, against Last Request; a
-   user who never called matches only Any time. (Core feature 4)
+   hour or Last 24 hours before the server's read, against Last Request; a
+   user who never called matches only Any time. A held row keeps updating
+   from events even when it stops matching, until the next page read.
+   (Core feature 4)
 8. **User detail.** An ID is a button opening a panel with the live row, recent
    requests, and the past hour or day as totals and a chart; closing returns
    focus to it. **Interpretation** of "Real-time event stream for that user":
@@ -62,9 +73,10 @@ and [live updates](live-updates.md#behavior).
    A failure keeps the typed input, shows the error and asks for one fresh
    read; the error stays until that form's next action or the panel closes.
    (Core feature 3)
-10. **Analytics.** Cards load apart from the table. Near limit prints its
-    definition: users active this hour at 90% or more, exceeded included
-    ([P4]). (Core feature 5)
+10. **Analytics.** Cards load apart from the table, count every registered
+    user whatever the table shows, and give the time of their read. Near
+    limit prints its definition: users active this hour at 90% or more,
+    exceeded included ([P4]). (Core feature 5)
 11. **Panels load alone.** Detail, history and cards each keep their last data
     and error until a load succeeds and drop a replaced key's late result
     ([P22]); one failing leaves the others working ([P23]). (Expectation:
@@ -102,10 +114,13 @@ server only; `1` selects fixtures).
 
 Vitest in jsdom (`npm test -w apps/web`), paths under `apps/web/src/`:
 
-- `api/client.test.ts`: bearer token, encoded ID; a 401 reported once, a late
-  one dropped; malformed body; timeout; method, path and body of each route.
+- `api/client.test.ts`: bearer token, encoded ID and query; a 401 reported
+  once, a late one dropped; malformed body and page; timeout; method, path
+  and body of each route.
 - `api/fixture-client.test.tsx`: an action raises the version; cancelling stops
-  a request; the stand-in socket sends once, disconnecting cancels the rest.
+  a request; the stand-in socket sends once, disconnecting cancels the rest;
+  filters (each Status included) and plain string order as functions;
+  filters apply before the page is cut.
 - `live/rows.test.ts`: version and window ordering.
   `live/useLiveUsers.test.tsx`: snapshot on connect; a newer event beats a slow
   snapshot; coalescing; visible-only ticks; no request for events; a malformed
@@ -117,13 +132,14 @@ Vitest in jsdom (`npm test -w apps/web`), paths under `apps/web/src/`:
   `lib/useRequest.test.tsx`: key change cancels; coalescing; A, B, A.
 - `App.test.tsx` (Socket.IO mocked): token first; handshake; five headers;
   older event ignored; Live, no update yet; refusal; storage blocked.
-- `features/dashboard.test.tsx`: filters and order as functions; failed
-  snapshot; failed and late actions; invalid input never sent.
+- `features/dashboard.test.tsx`: failed snapshot; failed and late actions; invalid input never sent.
   `features/table/UsersTable.test.tsx`: search, Status and Last active narrow
-  the rows on screen. `features/admin/AdminForms.test.tsx`: Suspend and Add
+  the rows on screen and start at page 1; the page buttons and "Users per
+  page" ask for their page; a refresh past the last page returns to page 1. `features/admin/AdminForms.test.tsx`: Suspend and Add
   extra send a numeric body; Resume throttling ends the suspension; one action
   at a time.
-  `features/analytics/AnalyticsCards.test.tsx`: a timeout stays shown.
+  `features/analytics/AnalyticsCards.test.tsx`: a timeout stays shown; the
+  time of the read is shown.
   `assembled.test.tsx`: focus; exceeded event announced; an action keeps its
   row. `fixture-screen.test.tsx`: one reload per tick.
 - Not covered: charts, the empty-table message, "Past day", Last hour, Last
@@ -147,10 +163,17 @@ Vitest in jsdom (`npm test -w apps/web`), paths under `apps/web/src/`:
    87 / 100 at 2 s; "user-1" leaves user-10 to 12; cards 12, 64%, 41.
 4. Open user-09: "Set limit" 1.5 shows "Enter an integer from 1 to 10000.";
    Escape closes the panel, focus returns to "user-09".
+5. With the API of step 2 and `npm run seed:users -- --count 1000`: "Page 1
+   of 20 · 1000 matching users" and 50 rows; "Next page" shows page 2, "Last
+   page" page 20 with "Next page" disabled; searching "user-777" shows one
+   row; "Users per page" 100 shows "Page 1 of 10"; the Total users card
+   reads 1000 on every page.
 
 ## Limits
 
-jsdom is not a browser: layout and real focus are unproven. The token is a
+jsdom is not a browser: layout and real focus are unproven. Every keystroke
+in the search field asks for a new page, without a pause, so the server
+scans the registry once per keystroke. The token is a
 shared demo credential any script of the page can read. The notification
 lifetime is untested.
 

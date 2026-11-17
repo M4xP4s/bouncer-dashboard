@@ -2,11 +2,11 @@
 
 ## Scope
 
-The workspace, start-up configuration, who a caller is, the Redis connection,
-the health route, the error response and the two run modes: on the host for
-development, and in containers. Items are cited as [the requirements][req]
-name them: *Backend N*, *Core feature N*, *Submission*, *Expectation:
-quality*.
+The workspace, start-up configuration, who a caller is, the registry of
+users, the Redis connection, the health route, the error response and the two
+run modes: on the host for development, and in containers. Items are cited as
+[the requirements][req] name them: *Backend N*, *Core feature N*,
+*Submission*, *Expectation: quality*.
 
 ## Behavior
 
@@ -16,16 +16,19 @@ quality*.
    dependencies. (Backend 2; Submission; Expectation: maintainability)
 2. **One function checks the configuration before the API listens.** A
    missing or malformed variable of [`.env.example`][env] stops the process
-   with one error that names every bad variable and shows no value. A user ID
-   matches `[A-Za-z0-9_-]{1,64}`, so it holds no `:`; repeated IDs or tokens,
-   and a user token equal to the admin token, are refused. (Backend 1;
+   with one error that names every bad variable and shows no value; only
+   `DEMO_USERS` may be empty. A user ID matches `[A-Za-z0-9_-]{1,64}`, so it
+   holds no `:`; repeated IDs or tokens, and a user token equal to the admin
+   token, are refused. (Backend 1;
    Expectation: reliability; pitfalls [P10], [P11])
 3. **Interpretation of "based on user id, and not IP/MAC" (Backend 1).** The
    brief does not say how a caller becomes known. A guard sets the ID that the
-   bearer token maps to in `DEMO_USERS`; a client-sent ID is ignored and no
-   network address is read, so no caller can spend another's quota. A missing,
-   unknown or admin credential is a 401 before any quota is touched.
-   (Backend 1; Expectation: security)
+   bearer token belongs to in the user registry (rule 11); a client-sent ID is
+   ignored and no network address is read, so no caller can spend another's
+   quota. A missing, unknown or admin credential is a 401, and a registry
+   that cannot be read a 503, before any quota is touched. The current admin
+   token is refused even where a user registered it before the admin token
+   was changed. (Backend 1; Expectation: security)
 4. **Interpretation of "Admin Controls" (Core feature 3).** The brief names
    no admin identity. One `ADMIN_TOKEN`, compared in constant time, is
    required as `Authorization: Bearer` on every admin route and as
@@ -64,8 +67,31 @@ quality*.
     because Redis has no password and the demo credentials are public, and
     counts the application healthy once rule 8 answers 200. (Expectation:
     security; Expectation: reliability)
+11. **The user registry in Redis is the list of users.** A request's token and
+    an admin route's user ID are looked up there each time; no process holds
+    the whole list, and the application sets no cap on its size. Registering
+    a user writes no quota key, so it never changes usage, history or policy.
+    A token is kept only as its SHA-256 digest, and no route or event returns
+    one. (Backend 1; Expectation: scalability; Expectation: security; [P9])
+12. **Registering only adds.** At start-up the API registers the `DEMO_USERS`
+    pairs; `npm run seed:users -- --count N` registers `user-01` with
+    `demo-token-01` through N, numbered with at least two digits. A registered
+    ID keeps its token; nothing is removed or reset, so a rerun or a smaller N
+    adds nothing. Users are written in batches of at most 100, each one
+    transaction watched on a connection of its own and retried at most 10
+    times when another writer changed the registry. A batch with a malformed
+    or repeated identity, the admin token, or a token registered to another
+    user is refused whole; earlier batches stay, the command prints its
+    progress and exits 1, and a rerun resumes. At start-up such a refusal
+    stops the API. The command uses a connection of its own that neither
+    queues nor reconnects: when Redis refuses the connection, does not accept
+    it within 3 s, or leaves a command unanswered for 3 s, the command prints
+    one line and exits 1 without retrying. Its progress counts only batches
+    Redis confirmed; the batch in flight may have been stored, and running the
+    command again is safe because it only adds missing users.
+    (Expectation: reliability)
 
-The start-up of rules 2 and 5, and the outage of rule 7, in one picture:
+The start-up of rules 2, 5 and 12, and the outage of rule 7, in one picture:
 
 ```mermaid
 flowchart LR
@@ -74,17 +100,38 @@ flowchart LR
     Config -->|yes| Redis{"Redis answers?"}
     Redis -->|"nothing listens:<br/>at once"| NoRedis["Exit 1, names<br/>the host, not<br/>the URL"]
     Redis -->|"accepts, then<br/>stays silent:<br/>about 3 s"| NoRedis
-    Redis -->|yes| Listen["Listen on PORT<br/>under /api"]
+    Redis -->|yes| Register{"DEMO_USERS<br/>registered?"}
+    Register -->|"a batch is<br/>refused"| Refused["Exit 1"]
+    Register -->|yes| Listen["Listen on PORT<br/>under /api"]
     Listen -.->|"connection lost,<br/>or no reply<br/>for 3 s"| Retry["Keep listening<br/>and reconnect<br/>every 500 ms"]
 ```
+
+## Interface
+
+| Key | Holds | Expiry |
+| --- | --- | --- |
+| `rl:registry:ids` | sorted set of every user ID, all with score 0, so it is ordered by ID | none; grows with the registry |
+| `rl:registry:users` | hash: user ID to token digest | none; grows with the registry |
+| `rl:registry:tokens` | hash: token digest to user ID | none; grows with the registry |
 
 ## Decisions
 
 **Identity comes from a credential.** The brief wants a quota "based on user
 id" but gives no way to know the caller, and a client-sent ID lets one user
-drain another's quota. A guard maps a seeded bearer token to the ID; an
+drain another's quota. A guard maps a registered bearer token to the ID; an
 identity provider, which the brief does not ask for, would replace only that
 lookup. Cost: the demo tokens are public. Cases: the guard spec.
+
+**Users are registered in Redis, not configured.** The expectations ask for
+a solution that scales, and thousands of users do not fit in an environment
+variable that every process must repeat. Redis already holds the quota, so
+three keys add a registry without another service. Only registration uses
+`WATCH`, on its own connection; admission keeps its one transaction.
+Alternatives: a file per process, where adding a user means a restart and
+processes can disagree; a database, a second store to run. Tokens are kept
+as digests so that a copy of Redis gives no credentials away. Cost: one more
+Redis read per authenticated request, and a Redis outage now also fails
+authentication, with 503. Cases: the guard spec, the registry cases.
 
 **One types-only package carries the shared contract.** The dashboard and API
 must agree on every payload, and copies drift. Both import `@app/contracts`,
@@ -148,10 +195,17 @@ Compose milestone.
 
 Unit, no Redis (`npm test`):
 - `apps/api/src/config/config.spec.ts`: a valid environment parses; each
-  missing or malformed variable and bad `DEMO_USERS` entry is refused; all
-  problems come in one error, with no credential in it.
-- `apps/api/src/auth/user-token.guard.spec.ts`: the token's ID is set; a bad
-  header, an unknown token and the admin token are 401; a sent ID is ignored.
+  missing or malformed variable and bad `DEMO_USERS` entry is refused, and an
+  empty `DEMO_USERS` is not; all problems come in one error, with no
+  credential in it.
+- `apps/api/src/auth/user-token.guard.spec.ts`: the registry's ID is set; a
+  bad header and an unknown token are 401; a sent ID is ignored; a registry
+  outage reaches the error filter.
+- `apps/api/src/users/seed-users.spec.ts`: generated IDs and tokens; a batch
+  with a bad or repeated identity or the admin token is refused before
+  Redis is called; when a batch's transaction fails after an earlier batch
+  was confirmed, seeding rejects and its progress counts the first batch
+  only.
 - `apps/api/src/api-error.filter.spec.ts`: status, message and extra fields
   are kept; a list of messages becomes one; a hidden middleware detail is
   withheld; any other error is a logged 500; a reply already begun is left.
@@ -168,6 +222,11 @@ Unit, no Redis (`npm test`):
   the 503 comes without a `PING`.
 
 Real store (run as in [rate limiting](rate-limiting.md#test-plan)):
+- `apps/api/test/registry.e2e-spec.ts`: 10000 users registered in batches;
+  a rerun and a smaller count add nothing and keep tokens, usage and limit;
+  a refused batch keeps earlier batches and a corrected rerun resumes; two
+  writers at once register each user once; with no `DEMO_USERS` a registered
+  token works, and an admin token registered as a user's never does.
 - `apps/api/test/outage.e2e-spec.ts`: behind a TCP relay that is stopped,
   and one that is frozen while requests keep arriving, a sample request and
   an admin action get a 503 without `x-count` within 5 s and later ones
@@ -227,14 +286,29 @@ prints its trickle line, `http://127.0.0.1:3000` signed in with
 `demo-admin-token` shows `user-02` to `user-04` as OK, `user-05` as Warning
 and `user-06` as Exceeded; the trickle then adds one request every 3 s.
 
+With the API still running on a fresh Redis:
+
+```sh
+npm run seed:users -- --count 1000
+npm run seed:users -- --count 10
+curl -si -H 'Authorization: Bearer demo-token-1000' localhost:3000/api/sample
+```
+
+The first prints `"added":988,"total":1000` (the 12 `DEMO_USERS` are the
+first 12 generated users), the second `"added":0,"total":1000`, and the
+`curl` answers 200 with `x-count: 99`.
+
 ## Limits
 
 Demo authentication is not production authentication: the tokens are static
 and public, with no expiry, revocation, per-person admin identity or
 failed-attempt limit, and user tokens are not compared in constant time. There
-is no TLS and the Redis in Compose has no password. Replication and failover
-are not covered, and the connection log has no test. Compose runs one API
-container on one host: a demo, not a deployment.
+is no TLS and the Redis in Compose has no password. Users cannot be removed
+and tokens cannot be changed; Redis memory bounds the registry, and a
+registry lost with Redis data is registered again by the seed command without
+the usage it held. Replication and failover are not covered, and the
+connection log has no test. Compose runs one API container on one host: a
+demo, not a deployment.
 
 [req]: ../REQUIREMENTS.md
 [env]: ../../.env.example
