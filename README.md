@@ -27,24 +27,28 @@ npm test                            # needs nothing running
 npm run check:contracts             # the fixture data against its own rules
 npm run test:integration            # after a build; needs a Redis server of its own, below
 npm run check:two-process           # after a build, on that same server; API ports 3203 and 3204
+npm run check:population            # on that same server; times the list and analytics at 1000 and
+                                    # 10000 users with an API on PORT (default 3001)
 ```
 
-The integration suite and the two-process check empty database 1 of their
-Redis, and the API's events travel over Redis Pub/Sub, which every database of
-a server shares: a development API on the same server would exchange events
-with them. Give them a server of their own, and run the checks one after
-another, never at the same time:
+The integration suite, the two-process check and the population check empty
+database 1 of their Redis, and the API's events travel over Redis Pub/Sub,
+which every database of a server shares: a development API on the same server
+would exchange events with them. Give them a server of their own, and run the
+checks one after another, never at the same time:
 
 ```sh
 docker run -d --rm --name bouncer-test-redis -p 127.0.0.1:6380:6379 redis:8-alpine
 export TEST_REDIS_URL=redis://127.0.0.1:6380/1
 npm run test:integration
 npm run check:two-process
+npm run check:population
 docker stop bouncer-test-redis
 ```
 
-Without `TEST_REDIS_URL`, both use database 1 of the Compose Redis on :6379;
-nothing else may use that server while they run.
+Without `TEST_REDIS_URL`, the first two use database 1 of the Compose Redis on
+:6379, and nothing else may use that server while they run; the population
+check refuses to start.
 
 To run the API and the dashboard on the host:
 
@@ -52,6 +56,8 @@ To run the API and the dashboard on the host:
 docker compose up -d redis          # Redis on 127.0.0.1:6379
 cp .env.example .env                # demo values; each one is explained there
 npm run dev                         # API on :3000, dashboard on http://localhost:5173
+npm run seed:users -- --count 1000  # registers user-01 to user-1000 (demo-token-01 to -1000); only adds;
+                                    # exits 1 when Redis leaves it unanswered for 3 s, and a rerun is safe
 ```
 
 `npm run start:dev -w apps/api` starts the API alone. After `npm run build`,
