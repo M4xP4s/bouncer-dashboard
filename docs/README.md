@@ -7,9 +7,10 @@ How this project is specified, and where each kind of fact is defined.
 | Step | Document | Answers |
 | --- | --- | --- |
 | 1 | [REQUIREMENTS.md](REQUIREMENTS.md) | What was asked: the brief and the quality expectations. Fixed text; it is never edited. |
-| 2 | `specs/<capability>.md` | What the system does and why. Written or updated before the code it describes. |
-| 3 | Source code and `packages/contracts` | How. Comments explain why a line exists, not what it does. |
-| 4 | `VERIFICATION.md` | What was shown to work: dated results and what was not checked. |
+| 2 | [PITFALLS.md](PITFALLS.md) | What is known to go wrong in a system like this one. Read before designing. |
+| 3 | `specs/<capability>.md` | What the system does and why. Written or updated before the code it describes. |
+| 4 | Source code and `packages/contracts` | How. Comments explain why a line exists, not what it does. |
+| 5 | `VERIFICATION.md` | What was shown to work: dated results and what was not checked. |
 
 The [README](../README.md) is the entry point: overview and commands.
 
@@ -22,6 +23,7 @@ second time and they do not contradict it, so a change is made in one place.
 | Fact | Defined in |
 | --- | --- |
 | What was asked | [REQUIREMENTS.md](REQUIREMENTS.md) |
+| A known failure mode and the check that guards against it | [PITFALLS.md](PITFALLS.md) |
 | A behavior rule, or the reading chosen for an ambiguous requirement | **Behavior** in the owning specification |
 | A decision, the alternatives considered and its cost | **Decisions** in the owning specification |
 | Routes, events and storage keys | **Interface** in the owning specification |
@@ -51,6 +53,18 @@ A deviation is never left standing and never explained away in a document.
 The code is brought back to the requirement, or the work stops and the owner
 decides. Adding something the brief does not ask for is allowed only when it
 changes nothing the brief does ask for, and it is labelled as an addition.
+
+## Diagrams
+
+Use a diagram wherever it explains something faster than a paragraph, in a
+README, a specification or the pitfalls.
+
+- **A sequence or an interleaving:** a Mermaid block in the document. It is
+  text, so a review shows what changed.
+- **An overview or an architecture picture:** an Excalidraw drawing exported
+  as a PNG to `docs/images/`, with alternative text that says what it shows.
+- A diagram illustrates a fact that the text defines. If the two disagree,
+  the text is right and the diagram is redrawn.
 
 ## Specifications
 

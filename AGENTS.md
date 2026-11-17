@@ -12,7 +12,8 @@ that every significant decision come with its reasoning and trade-offs.
 
 Read [the documentation map](docs/README.md) before writing code or
 documents. It defines the specification template and the one place where each
-kind of fact is written.
+kind of fact is written. Read [the pitfalls](docs/PITFALLS.md) before
+designing or changing a capability, and cite their IDs in reviews.
 
 ## How work is done
 
@@ -42,6 +43,13 @@ kind of fact is written.
   [the documentation map](docs/README.md#one-definition-per-fact). Mention,
   summarize or link to it elsewhere; do not define it a second time or
   contradict it.
+- A pitfall is described by a short text, a snippet written for the document
+  or a diagram. It never says where the fault was observed and never
+  contains code taken from another project. A pitfall about something this
+  repository does not build is left out.
+- Add diagrams freely, following
+  [the diagram rules](docs/README.md#diagrams): Mermaid for sequences,
+  Excalidraw PNGs for overviews, also in READMEs.
 - Do not claim scalability, production readiness or a passing check without
   evidence produced from this repository. State what was not verified.
 - Prefer the smallest complete solution. Add a service or dependency only for
