@@ -40,9 +40,13 @@ function createRedisClient(url: string, state: { connected: boolean }) {
 /** The client type depends on its options, so it is taken from the factory. */
 export type RedisClient = ReturnType<typeof createRedisClient>;
 
-/** A refused connection arrives as an AggregateError with no message. */
+/**
+ * A refused connection is an AggregateError with no message, only a code, and
+ * a failed first connection wraps it.
+ */
 function describe(error: unknown): string {
-  const { message, code, name } = error as NodeJS.ErrnoException;
+  const { originalError = error } = error as { originalError?: unknown };
+  const { message, code, name } = originalError as NodeJS.ErrnoException;
   return message || code || name;
 }
 

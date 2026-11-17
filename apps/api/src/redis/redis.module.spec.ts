@@ -15,12 +15,14 @@ async function listen(): Promise<{ server: Server; url: string }> {
 }
 
 describe('connectRedis', () => {
-  it('fails at once when nothing listens, naming the host and not the URL', async () => {
+  it('fails at once when nothing listens, naming the host and the reason, not the URL', async () => {
     const { server, url } = await listen();
     await new Promise((resolve) => server.close(resolve));
+    // `localhost` may resolve to two addresses; the reason must survive that.
+    const closed = url.replace('//127.0.0.1', '//:secret@localhost');
 
-    await expect(connectRedis(url.replace('//', '//:secret@'))).rejects.toThrow(
-      /^Cannot connect to Redis at 127\.0\.0\.1:\d+ (?!.*secret)/,
+    await expect(connectRedis(closed)).rejects.toThrow(
+      /^Cannot connect to Redis at localhost:\d+ \((?!.*secret).*ECONNREFUSED/,
     );
   });
 
