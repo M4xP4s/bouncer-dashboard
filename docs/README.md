@@ -33,6 +33,7 @@ second time and they do not contradict it, so a change is made in one place.
 | Commands | The [README](../README.md) |
 | Results of checks | `VERIFICATION.md` |
 | Rules for coding agents | [AGENTS.md](../AGENTS.md) |
+| Code readability rules | [CODING-RULES.md](CODING-RULES.md) |
 
 There is no separate decision log and no separate reference document: a topic
 is defined in the specification of the capability it belongs to.
