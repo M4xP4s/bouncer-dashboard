@@ -73,7 +73,9 @@ counts nothing.
 
 ## Decisions
 
-**Concurrent safety.** Backend 5 asks that no request slip through, so the
+### Concurrent safety
+
+Backend 5 asks that no request slip through, so the
 decision rests on a position the write itself claims, read with the policy in
 the same transaction. One `MULTI`/`EXEC` per request: `ZADD` a unique ID,
 `PEXPIREAT`, bump the version and last request time, then `ZCARD` and the policy
@@ -84,11 +86,15 @@ leave a key without expiry ([P5]), and a late decrement after a reset admits
 one too many. Cost: a second round trip per request; rejected and bypassed
 entries stay until removed or expired.
 
-**Fixed hour.** A rolling window is exact but needs another structure; the fixed
+### Fixed hour
+
+A rolling window is exact but needs another structure; the fixed
 hour allows twice the cap across a boundary and needs synchronized clocks. Keys
 expire an hour late so a slow clock never counts 1 on a deleted key.
 
-**Error classification (2026-11-17).** Classify by the client's error type in
+### Error classification
+
+Classify by the client's error type in
 one transaction wrapper: a server error reply is surfaced as 500; other
 execution failures are treated as unavailable. This avoids labelling wrong-type
 keys as an outage. Parsing message prefixes would couple policy to error text;
@@ -109,7 +115,7 @@ Mocked store (`vitest-mock-extended`), no Redis, in `apps/api/src/`:
 
 Real store, in `apps/api/test/`, started with the whole application (the
 command, and the Redis server of its own that the suite needs, are in the
-[README](../../README.md#commands); the suite empties the database it uses):
+[README](../../README.md#verification); the suite empties the database it uses):
 - `admission.e2e-spec.ts`: `x-count` 99 down to 0, then the 429; the quota
   changes exactly at the UTC hour ([P25]); one user's exhaustion leaves
   another's quota; a failing handler still counts; a 401 and a spoofed ID

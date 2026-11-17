@@ -65,7 +65,8 @@ and [live updates](live-updates.md#behavior).
    requests, and the past hour or day as totals and a chart; closing returns
    focus to it. **Interpretation** of "Real-time event stream for that user":
    the list gains at once the request an accepted event carries, merged by ID,
-   within 24 hours, newest 100. (Core feature 2)
+   within 24 hours, newest 100. It lists requests, not admin actions: an
+   action changes the row and adds no entry. (Core feature 2)
 9. **Admin controls.** Reset usage, Set limit, Suspend, Resume throttling and
    Add extra, as in [admin API](admin-api.md#behavior). A number outside its
    range there shows "Enter an integer from 1 to N." and sends nothing. One
@@ -94,21 +95,36 @@ server only; `1` selects fixtures).
 
 ## Decisions
 
-- **UI library: Mantine.** One family covers forms, alerts and notifications.
-  MUI, Ant Design, shadcn/ui and Chakra were compared from general knowledge.
-- **Shape checks written by hand.** `packages/contracts` holds types only, so
-  a schema library adds a dependency and a second definition of every payload;
-  the guards in `api/validation.ts` restate them too, more cheaply. Cost: a
-  field a guard omits goes unnoticed, relations (remaining against total) are
-  unchecked, and the compiler compares only a guard's lists of union members
-  with its type. Shown by `api/client.test.ts`, `live/useLiveUsers.test.tsx`.
-- **Live state in one hook, no state library.** Events and snapshots arrive in
-  any order, so `useLiveUsers` owns rows and the snapshot queue; a query
-  library would not order them and adds a dependency. Shown by
-  `live/useLiveUsers.test.tsx`, `live/rows.test.ts`.
-- **Fixture mode.** Screens had to be reviewable without Redis: fixtures sit
-  behind a development-only import, with no mock server. Cost: data can drift,
-  hence `fixtures/check.ts`. Shown by `api/fixture-client.test.tsx`.
+### UI library: Mantine
+
+One family covers forms, alerts and notifications.
+MUI, Ant Design, shadcn/ui and Chakra were compared from general knowledge.
+Cost: every screen is written against its components and styles, so replacing
+the library means rewriting the views.
+
+### Shape checks written by hand
+
+`packages/contracts` holds types only, so
+a schema library adds a dependency and a second definition of every payload;
+the guards in `api/validation.ts` restate them too, more cheaply. Cost: a
+field a guard omits goes unnoticed, relations (remaining against total) are
+unchecked, and the compiler compares only a guard's lists of union members
+with its type. Shown by `api/client.test.ts`, `live/useLiveUsers.test.tsx`.
+
+### Live state in one hook, no state library
+
+Events and snapshots arrive in
+any order, so `useLiveUsers` owns rows and the snapshot queue; a query
+library would not order them and adds a dependency. Cost: queueing the
+snapshot reads, cancelling them and merging in order are code of this
+repository to maintain and test. Shown by
+`live/useLiveUsers.test.tsx`, `live/rows.test.ts`.
+
+### Fixture mode
+
+Screens had to be reviewable without Redis: fixtures sit
+behind a development-only import, with no mock server. Cost: data can drift,
+hence `fixtures/check.ts`. Shown by `api/fixture-client.test.tsx`.
 
 ## Test plan
 
