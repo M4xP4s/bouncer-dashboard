@@ -2,13 +2,28 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "rules": {
     "typescript/no-explicit-any": "error",
-    "typescript/no-floating-promises": "error"
+    "typescript/no-floating-promises": "error",
+    "max-lines-per-function": [
+      "error",
+      { "max": 50, "skipBlankLines": true, "skipComments": true }
+    ]
   },
   "overrides": [
     {
       "files": ["**/*.spec.ts"],
       "rules": {
         "typescript/unbound-method": "off"
+      }
+    },
+    {
+      "files": [
+        "**/*.spec.ts",
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.e2e-spec.ts"
+      ],
+      "rules": {
+        "max-lines-per-function": "off"
       }
     }
   ],
