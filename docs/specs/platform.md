@@ -78,9 +78,11 @@ application is built, with 1 s for the TCP connection. A socket silent for
 every second keeps a healthy idle connection from looking silent. Before its
 first success the reconnect strategy returns the error, so start-up fails;
 afterwards it retries every 500 ms. Alternative: the defaults, which wait
-without limit on a silent peer and treat a socket timeout as final. Cost: a
-Redis that hangs under traffic is not noticed, because every command written
-restarts the timer. Cases: the Redis module spec; the milestone.
+without limit on a silent peer and treat a socket timeout as final. Cost:
+this is a limit on silence, not on the total time to start, so a peer that
+keeps sending an unfinished reply is not cut off; and a Redis that hangs
+under traffic is not noticed, because every command written restarts the
+timer. Cases: the Redis module spec; the milestone.
 
 ## Test plan
 
