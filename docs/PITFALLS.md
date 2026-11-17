@@ -11,7 +11,7 @@ Each one names the fault, the rule that prevents it here and a check planned
 to catch it. A snippet or diagram illustrates the fault; it was written for
 this document and is not code from this repository.
 
-![The request path and the event path, with each pitfall placed where it bites](images/pitfall-map.png)
+![Where each pitfall bites. Request path inside the API process: the configuration and token guard (P10, P11), RateLimitInterceptor (P2, P8), the rate limit store (P3, P5, P6, P7, P28), the Redis connection (P26, P27), then Redis itself (P9, P13). Admin and event path: admin routes (P12, P14 to P16) write through the store and emit to the live gateway (P6, P20), which sends events to the dashboard's live rows (P18 to P21) feeding the table, detail, forms and analytics (P1, P4, P17, P22, P23, P33). Tests, wiring and claims apply everywhere (P24, P25, P29 to P32). Each pitfall is labelled with its short name.](images/pitfall-map.png)
 
 The **Guard** line is a summary. The rule itself is defined in the
 specification that owns the topic; where it rests on a reading of an
@@ -316,7 +316,7 @@ sequenceDiagram
     Note over Page: fetch 1 is now stale and will be dropped
     Page->>API: fetch 2
     API-)Page: changed (t = 400 ms)
-    Note over Page: fetch 2 is stale as well; the table never moves
+    Note over Page: fetch 2 is stale as well, so the table never moves
 ```
 
 **Guard:** an event carries the user's full row and a version and is applied
