@@ -47,6 +47,25 @@ describe('page, API and socket on one origin', () => {
     });
   });
 
+  it('sends no CORS headers to a page on another origin', async () => {
+    const simple = await request(url)
+      .get('/api/health')
+      .set('Origin', 'http://evil.example')
+      .expect(200);
+    const preflight = await request(url)
+      .options('/api/admin/users/user-01/limit')
+      .set('Origin', 'http://evil.example')
+      .set('Access-Control-Request-Method', 'PUT')
+      .set('Access-Control-Request-Headers', 'authorization,content-type');
+
+    for (const response of [simple, preflight]) {
+      const corsHeaders = Object.keys(response.headers).filter((name) =>
+        name.startsWith('access-control-'),
+      );
+      expect(corsHeaders).toEqual([]);
+    }
+  });
+
   it('lets a dashboard connect over polling under /socket.io', async () => {
     const socket = io(url, {
       auth: { token: ADMIN_TOKEN },
