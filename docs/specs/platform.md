@@ -45,13 +45,13 @@ The start-up of rules 2 and 5 in one picture:
 
 ```mermaid
 flowchart LR
-    Start["Process starts"] --> Config{"Configuration valid?"}
-    Config -->|no| BadConfig["Exit 1 with one error naming every bad variable"]
+    Start["Process starts"] --> Config{"Configuration<br/>valid?"}
+    Config -->|no| BadConfig["Exit 1, every<br/>bad variable<br/>is named"]
     Config -->|yes| Redis{"Redis answers?"}
-    Redis -->|"nothing listens: at once"| NoRedis["Exit 1, naming the host and not the URL"]
-    Redis -->|"accepts, then silent: about 3 s"| NoRedis
-    Redis -->|yes| Listen["Listen on PORT under /api"]
-    Listen -.->|"connection lost later"| Retry["Keep listening, reconnect every 500 ms"]
+    Redis -->|"nothing listens:<br/>at once"| NoRedis["Exit 1, names<br/>the host, not<br/>the URL"]
+    Redis -->|"accepts, then<br/>stays silent:<br/>about 3 s"| NoRedis
+    Redis -->|yes| Listen["Listen on PORT<br/>under /api"]
+    Listen -.->|"connection<br/>lost later"| Retry["Keep listening<br/>and reconnect<br/>every 500 ms"]
 ```
 
 ## Decisions
