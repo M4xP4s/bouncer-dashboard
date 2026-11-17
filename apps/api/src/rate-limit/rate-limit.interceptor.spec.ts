@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import type { RequestOutcome } from '@app/contracts';
 import { lastValueFrom, of, throwError } from 'rxjs';
-import { mock, mockDeep } from 'vitest-mock-extended';
+import { mock } from 'vitest-mock-extended';
 import type { LiveGateway } from '../live/live.gateway.js';
 import { RateLimitInterceptor } from './rate-limit.interceptor.js';
 import {
@@ -32,11 +32,11 @@ function setup(identity: { userId?: unknown } = { userId: 'user-01' }) {
   store.recordOutcome.mockResolvedValue(false);
   const gateway = mock<LiveGateway>();
   const response = { setHeader: vi.fn() };
-  const context = mockDeep<ExecutionContext>();
-  context.switchToHttp.mockReturnValue({
-    getRequest: () => identity,
-    getResponse: () => response,
-  } as never);
+  const http = mock<ReturnType<ExecutionContext['switchToHttp']>>();
+  http.getRequest.mockReturnValue(identity);
+  http.getResponse.mockReturnValue(response);
+  const context = mock<ExecutionContext>();
+  context.switchToHttp.mockReturnValue(http);
   const next = mock<CallHandler>();
   next.handle.mockReturnValue(of('handler result'));
   const interceptor = new RateLimitInterceptor(store, gateway);
@@ -94,7 +94,7 @@ describe('RateLimitInterceptor', () => {
     const { store, next, run } = setup();
     const admitted = admission('allowed', 1);
     store.admit.mockResolvedValue(admitted);
-    let finishRecording: ((firstRejection: boolean) => void) | undefined;
+    let finishRecording: ((shouldNotify: boolean) => void) | undefined;
     const recording = new Promise<boolean>((resolve) => {
       finishRecording = resolve;
     });

@@ -30,6 +30,11 @@ function handshake(auth: unknown): Error | undefined {
   return next.mock.calls[0][0];
 }
 
+afterEach(() => vi.restoreAllMocks());
+
+const at = '2026-11-16T10:42:00.000Z';
+const row = buildRow('user-01', [100, null, null, null, {}], Date.parse(at));
+
 describe('LiveGateway handshake', () => {
   it('accepts the admin token', () => {
     expect(handshake({ token: 'admin-token' })).toBeUndefined();
@@ -47,7 +52,12 @@ describe('LiveGateway handshake', () => {
 });
 
 describe('LiveGateway.emitUpdate', () => {
-  const event = { cause: 'request', at: 'now' } as RateUpdateEvent;
+  const event: RateUpdateEvent = {
+    cause: 'request',
+    at,
+    row,
+    request: { id: 'request-1', at, outcome: 'allowed', remaining: 0 },
+  };
 
   it('sends rate:update to every connected dashboard', () => {
     const { gateway, server } = gatewayWithServer();
@@ -74,16 +84,12 @@ describe('LiveGateway.emitUpdate', () => {
 });
 
 describe('LiveGateway.emitLimitExceeded', () => {
-  const at = '2026-11-16T10:42:00.000Z';
-  const row = buildRow('user-01', [100, null, null, null, {}], Date.parse(at));
   const event: RateLimitExceededEvent = {
     at,
     row,
     retryAt: row.resetAt,
     request: { id: 'request-1', at, outcome: 'denied', remaining: 0 },
   };
-
-  afterEach(() => vi.restoreAllMocks());
 
   it('sends rate:limit_exceeded to every connected dashboard', () => {
     const { gateway, server } = gatewayWithServer();

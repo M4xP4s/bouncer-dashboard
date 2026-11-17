@@ -75,7 +75,7 @@ export class RateLimitInterceptor implements NestInterceptor {
 
     const admission = await this.admit(userId, now);
     const { outcome, row, requestId } = admission;
-    const firstRejection = await this.recordOutcome(userId, now, admission);
+    const shouldNotify = await this.recordOutcome(userId, now, admission);
     const request: RequestRecord = {
       id: requestId,
       at,
@@ -84,7 +84,7 @@ export class RateLimitInterceptor implements NestInterceptor {
     };
 
     if (outcome === 'denied') {
-      if (firstRejection) {
+      if (shouldNotify) {
         this.live.emitLimitExceeded({ at, row, retryAt: row.resetAt, request });
       }
       const seconds = retryAfterSeconds(now);

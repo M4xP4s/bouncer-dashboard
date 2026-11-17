@@ -43,7 +43,13 @@ export function buildRow(
 
   // The stored end time decides, not the key's existence: Redis removes an
   // expired key a moment late.
-  const suspendedUntil = Number(suspendReply ?? 0);
+  const suspendedUntilMs = Number(suspendReply ?? 0);
+  const lastRequestReply = user[userFields.lastRequestAt];
+  // A new hour is a reset too, so this is never older than the window.
+  const lastResetMs = Math.max(
+    windowStart(now),
+    Number(user[userFields.lastManualResetAt] ?? 0),
+  );
 
   return {
     userId,
@@ -55,17 +61,9 @@ export function buildRow(
     remaining: Math.max(0, total - used),
     status: statusFor(used, total),
     resetAt: iso(resetAt(now)),
-    lastRequestAt: user[userFields.lastRequestAt]
-      ? iso(Number(user[userFields.lastRequestAt]))
-      : null,
-    // A new hour is a reset too, so this is never older than the window.
-    lastResetAt: iso(
-      Math.max(
-        windowStart(now),
-        Number(user[userFields.lastManualResetAt] ?? 0),
-      ),
-    ),
-    suspendedUntil: suspendedUntil > now ? iso(suspendedUntil) : null,
+    lastRequestAt: lastRequestReply ? iso(Number(lastRequestReply)) : null,
+    lastResetAt: iso(lastResetMs),
+    suspendedUntil: suspendedUntilMs > now ? iso(suspendedUntilMs) : null,
     version: Number(user[userFields.version] ?? 0),
   };
 }
