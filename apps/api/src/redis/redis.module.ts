@@ -12,22 +12,30 @@ import { APP_CONFIG, type AppConfig } from '../config/config.js';
 /** Injection token for the connected Redis client. */
 export const REDIS = Symbol('REDIS');
 
-/** How long a socket may stay silent before it is closed. */
+/** How long Redis may stay silent before the connection is closed. */
 const SILENCE_LIMIT_MS = 3000;
+const WATCHDOG_INTERVAL_MS = 1000;
+const PING_INTERVAL_MS = 1000;
+const CONNECT_TIMEOUT_MS = 1000;
+const RECONNECT_DELAY_MS = 500;
+/** How long a healthy connection may wait on shutdown for its replies. */
+const SHUTDOWN_GRACE_MS = 1000;
 
 function redisOptions(url: string, state: { connected: boolean }) {
   return {
     url,
-    // One PING a second, so a healthy idle connection is never silent.
-    pingInterval: 1000,
+    // One PING a second, so a healthy idle connection is never silent. Its
+    // replies are what the watchdog counts as signs of life.
+    pingInterval: PING_INTERVAL_MS,
     socket: {
-      connectTimeout: 1000,
-      // Covers a peer that accepts the connection and then never answers.
+      connectTimeout: CONNECT_TIMEOUT_MS,
+      // Covers a silent peer only while nothing is written: every command
+      // sent restarts this timer. The watchdog covers a hang under traffic.
       socketTimeout: SILENCE_LIMIT_MS,
       // Fail until the first connection succeeds, so the API refuses to
       // start without Redis; afterwards retry every half second.
       reconnectStrategy: (_retries: number, cause: Error) =>
-        state.connected ? 500 : cause,
+        state.connected ? RECONNECT_DELAY_MS : cause,
     },
   };
 }
@@ -74,6 +82,45 @@ function supervise(client: RedisClient, name: string): void {
     down = false;
     logger.log('connection restored');
   });
+  watchForSilence(client, markDown);
+}
+
+/**
+ * Destroys and reopens a connection whose PINGs have gone unanswered for
+ * `SILENCE_LIMIT_MS`, which fails every command still waiting on it.
+ */
+function watchForSilence(
+  client: RedisClient,
+  markDown: (reason: string) => void,
+): void {
+  // A monotonic clock, so a change of the system time is not taken for silence.
+  let lastReplyAt = performance.now();
+  const noteReply = () => {
+    lastReplyAt = performance.now();
+  };
+  client.on('ready', noteReply);
+  client.on('ping-interval', noteReply);
+
+  // The watchdog owns its timer and these two listeners: it alone removes them.
+  const stop = () => {
+    clearInterval(watchdog);
+    client.off('ready', noteReply);
+    client.off('ping-interval', noteReply);
+  };
+
+  const watchdog = setInterval(() => {
+    // Closed for good, by shutdown or by a failed first connection.
+    if (!client.isOpen) return stop();
+    if (!client.isReady) return;
+    if (performance.now() - lastReplyAt < SILENCE_LIMIT_MS) return;
+    markDown(`no reply for ${SILENCE_LIMIT_MS} ms`);
+    client.destroy();
+    // Rejects only if the client is closed while reconnecting; failed
+    // attempts are logged by the `error` listener.
+    client.connect().catch(() => {});
+  }, WATCHDOG_INTERVAL_MS);
+  // The watchdog alone must not keep the process alive.
+  watchdog.unref();
 }
 
 /** Creates a client and connects it, or throws if the first attempt fails. */
@@ -107,7 +154,7 @@ export async function closeRedis(client: RedisClient): Promise<void> {
   if (client.isReady) {
     await Promise.race([
       client.close(),
-      delay(1000, undefined, { ref: false }),
+      delay(SHUTDOWN_GRACE_MS, undefined, { ref: false }),
     ]);
   }
   client.destroy();
