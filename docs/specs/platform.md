@@ -37,11 +37,18 @@ and the error response. Items are cited as [the requirements][req] name them:
    SIGTERM it waits at most 1 s for the replies it is owed, then closes.
    (Expectation: reliability)
 6. **Every error body is `ApiError`.** An exception keeps its status, message
-   and extra fields, such as a 429's retry time; any other error is a 500
+   and extra fields, such as a 429's retry time; an unavailable store is the
+   503 of [rate limiting](rate-limiting.md#behavior); any other error is a 500
    "Internal server error" whose cause is logged, not sent. (Backend 6;
    Expectation: security; pitfall [P8])
+7. **A Redis that stops answering after start-up is noticed within about
+   4 s, with or without traffic.** The connection is closed, so every command
+   still waiting fails, which a caller sees as the 503 of
+   [rate limiting](rate-limiting.md#behavior). The client then reconnects
+   every 500 ms and the API serves again without a restart. A Redis that is
+   stopped, not hung, is noticed at once. (Expectation: reliability)
 
-The start-up of rules 2 and 5 in one picture:
+The start-up of rules 2 and 5, and the outage of rule 7, in one picture:
 
 ```mermaid
 flowchart LR
@@ -51,7 +58,7 @@ flowchart LR
     Redis -->|"nothing listens:<br/>at once"| NoRedis["Exit 1, names<br/>the host, not<br/>the URL"]
     Redis -->|"accepts, then<br/>stays silent:<br/>about 3 s"| NoRedis
     Redis -->|yes| Listen["Listen on PORT<br/>under /api"]
-    Listen -.->|"connection<br/>lost later"| Retry["Keep listening<br/>and reconnect<br/>every 500 ms"]
+    Listen -.->|"connection lost,<br/>or no reply<br/>for 3 s"| Retry["Keep listening<br/>and reconnect<br/>every 500 ms"]
 ```
 
 ## Decisions
@@ -93,9 +100,23 @@ first success the reconnect strategy returns the error, so start-up fails;
 afterwards it retries every 500 ms. Alternative: the defaults, which wait
 without limit on a silent peer and treat a socket timeout as final. Cost:
 this is a limit on silence, not on the total time to start, so a peer that
-keeps sending an unfinished reply is not cut off; and a Redis that hangs
-under traffic is not noticed, because every command written restarts the
-timer. Cases: the Redis module spec; the milestone.
+keeps sending an unfinished reply is not cut off. Cases: the Redis module
+spec; the milestone.
+
+**A watchdog closes a connection that has stopped answering.** A request must
+not wait without limit on a hung store. The socket timeout cannot see one
+under traffic: it measures inactivity in both directions, so every command
+written restarts it. The reply to the once-a-second `PING` is therefore the
+sign of life: a timer checks it every second, and after 3 s without one it
+destroys the connection, which fails the commands in flight, and connects
+again. The silence is measured on a monotonic clock, so a change of the system
+time neither looks like silence nor hides it. Alternatives: a deadline on each
+command, which every call site must set and which leaves the connection queued
+behind the hung commands; the socket timeout alone, which only covers an idle
+connection. Cost: a command that runs longer than 3 s on the server is cut off
+like a hung one, so no blocking command may use this client; and a write that
+was cut off may or may not have been applied. Cases: the Redis module spec;
+the outage cases.
 
 ## Test plan
 
@@ -109,11 +130,26 @@ Unit, no Redis (`npm test`):
   are kept; a list of messages becomes one; a hidden middleware detail is
   withheld; any other error is a logged 500; a reply already begun is left.
 - `apps/api/src/redis/redis.module.spec.ts` (TCP only, no Redis): start-up
-  fails on a closed port, and on a peer that accepts and never answers.
+  fails on a closed port, and on a peer that accepts and never answers; a
+  peer that stops answering while commands keep arriving fails the command
+  in flight within 5 s, also with the system time standing still; a peer
+  that stops answering while the client is idle is cut off within 5 s; in
+  both cases the same client works once it answers again; a system time
+  that jumps forward does not close a healthy connection; a closed
+  connection keeps neither the watchdog's timer nor its listeners.
+
+Real store (run as in [rate limiting](rate-limiting.md#test-plan)):
+- `apps/api/test/outage.e2e-spec.ts`: behind a TCP relay that is stopped,
+  and one that is frozen while requests keep arriving, a sample request and
+  an admin action get a 503 without `x-count` within 5 s and later ones
+  within 0.5 s; once the relay passes traffic again both succeed without a
+  restart.
 
 Rule 4: the handshake cases are in the test plan of
 [live updates](live-updates.md#test-plan); a missing and a user token on
 every admin route are in that of the [admin API](admin-api.md#test-plan).
+
+Rule 5: the wait of at most 1 s on SIGTERM has no case.
 
 ## Milestone
 
