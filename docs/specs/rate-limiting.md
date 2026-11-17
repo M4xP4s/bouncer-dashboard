@@ -141,8 +141,10 @@ In a second shell, expect `HTTP/1.1 401` twice, then `x-count` 99 down to 0 (the
 401s counted nothing), then `HTTP/1.1 429` with `Retry-After` up to 3600,
 `x-count` 0 and the body of rule 8. After `docker compose stop redis` a request
 gets 503 without `x-count` once the disconnect is detected; no total request
-deadline is promised. A paused server can keep requests pending under traffic:
-the socket timeout measures inactivity, and writes restart it.
+deadline is promised. After `docker compose start redis` and then
+`docker compose pause redis`, a request waits and gets the same 503 within
+about 4 s ([platform](platform.md#behavior), rule 7); after
+`docker compose unpause redis` requests succeed again without a restart.
 
 ## Limits
 
@@ -155,8 +157,8 @@ quota or telemetry writes have already happened; there is no rollback or retry.
 
 Mocked-store tests cannot show shared-store atomicity. A boundary burst of twice
 the cap is possible; bypassed requests and a failed cleanup leave entries above
-the cap until the key expires. A silent Redis holds requests as long as the
-connection settings allow ([platform](platform.md#behavior)). One Redis only.
+the cap until the key expires. A silent Redis holds a request for up to
+about 4 s ([platform](platform.md#behavior), rule 7). One Redis only.
 
 [P2]: ../PITFALLS.md#p2-putting-the-used-count-in-x-count
 [P3]: ../PITFALLS.md#p3-a-status-threshold-that-only-works-for-round-limits
