@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
+import { ErrorReply } from 'redis';
 import type { RequestOutcome, RequestRecord, UserRow } from '@app/contracts';
 import { REDIS, type RedisClient } from '../redis/redis.module.js';
 import {
@@ -12,7 +13,7 @@ import {
 } from './keys.js';
 import { buildRow, type RowReplies } from './row.js';
 
-// Only Redis failures become 503; programming errors remain defects.
+// Connection/execution failures become 503; Redis error replies remain 500.
 export class StoreUnavailable extends Error {
   constructor(cause: unknown) {
     super('The rate limit store is unavailable.', { cause });
@@ -30,7 +31,7 @@ export interface Admission {
   generation: number;
 }
 
-// Quota decisions are atomic; history and notifications follow best-effort.
+// Quota decisions are atomic; bookkeeping tolerates unavailability, not error replies.
 @Injectable()
 export class RateLimitStore {
   constructor(@Inject(REDIS) private readonly redis: RedisClient) {}
@@ -153,6 +154,7 @@ export class RateLimitStore {
     try {
       return await call;
     } catch (cause) {
+      if (cause instanceof ErrorReply) throw cause;
       throw new StoreUnavailable(cause);
     }
   }

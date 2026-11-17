@@ -96,8 +96,7 @@ export class RateLimitInterceptor implements NestInterceptor {
     try {
       return await this.store.admit(userId, now);
     } catch (error) {
-      // Only the store's own "Redis did not answer". Any other error is a
-      // defect and must stay a 500, where a test or a log will show it.
+      // Error replies and defects propagate to the generic 500 handler.
       if (!(error instanceof StoreUnavailable)) throw error;
       this.logger.error('admission failed', error.cause);
       // The transaction may or may not have run, so the message makes no
@@ -112,8 +111,8 @@ export class RateLimitInterceptor implements NestInterceptor {
   }
 
   /**
-   * A charged request still reaches its handler if telemetry fails; a denied
-   * one stays a 429 without an alert whose uniqueness we could not establish.
+   * Unavailable bookkeeping preserves admission or 429; error replies and
+   * defects propagate before the handler, headers or events.
    */
   private async recordOutcome(
     userId: string,

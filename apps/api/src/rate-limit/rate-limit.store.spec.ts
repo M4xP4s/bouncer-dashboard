@@ -1,4 +1,5 @@
 import { mockDeep } from 'vitest-mock-extended';
+import { ErrorReply, MultiErrorReply } from 'redis';
 import type { RequestOutcome } from '@app/contracts';
 import type { RedisClient } from '../redis/redis.module.js';
 import {
@@ -250,6 +251,15 @@ describe('RateLimitStore.admit', () => {
     expect(failure).toBeInstanceOf(StoreUnavailable);
     expect(failure.cause).toBe(cause);
   });
+
+  it('preserves a Redis error reply from admission without retrying', async () => {
+    const { store, multi } = storeWith(1);
+    const reply = new MultiErrorReply([new ErrorReply('WRONGTYPE')], [0]);
+    multi.exec.mockRejectedValue(reply);
+
+    await expect(store.admit('user-01', now)).rejects.toBe(reply);
+    expect(multi.exec).toHaveBeenCalledOnce();
+  });
 });
 
 describe('RateLimitStore.recordOutcome', () => {
@@ -387,6 +397,17 @@ describe('RateLimitStore.recordOutcome', () => {
     await expect(
       store.recordOutcome('user-01', now, decision('denied')),
     ).rejects.toMatchObject({ cause });
+    expect(multi.exec).toHaveBeenCalledOnce();
+  });
+
+  it('preserves a Redis error reply from bookkeeping without retrying', async () => {
+    const { store, multi } = storeWith(101);
+    const reply = new MultiErrorReply([new ErrorReply('WRONGTYPE')], [0]);
+    multi.exec.mockRejectedValue(reply);
+
+    await expect(
+      store.recordOutcome('user-01', now, decision('denied')),
+    ).rejects.toBe(reply);
     expect(multi.exec).toHaveBeenCalledOnce();
   });
 });
