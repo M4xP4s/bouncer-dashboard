@@ -9,6 +9,8 @@ import type { Request } from 'express';
 import { bearerToken } from './token.js';
 import { APP_CONFIG, type AppConfig } from '../config/config.js';
 
+export const USER_TOKEN_REQUIRED = 'A valid user token is required.';
+
 /** A request that passed `UserTokenGuard`. */
 export interface AuthenticatedRequest extends Request {
   /** Set by the guard from the caller's credential, never by the caller. */
@@ -31,7 +33,7 @@ export class UserTokenGuard implements CanActivate {
     const userId = this.config.userIdByToken.get(token);
     if (userId === undefined) {
       // One message for every failure: do not tell the caller which part was wrong.
-      throw new UnauthorizedException('A valid user token is required.');
+      throw new UnauthorizedException(USER_TOKEN_REQUIRED);
     }
     request.userId = userId;
     return true;
