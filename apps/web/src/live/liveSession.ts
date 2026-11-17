@@ -5,7 +5,7 @@ import type {
   UserRow,
 } from '@app/contracts';
 import { clock, openSocket } from '../api/index.ts';
-import { listen } from '../api/socket.ts';
+import { listen, type LiveSocket, type SocketEvents } from '../api/socket.ts';
 import type { Session } from '../api/useSession.ts';
 import { isLimitExceeded, isRateUpdate } from '../api/validation.ts';
 import { oneAtATime, toError } from '../lib/async.ts';
@@ -41,6 +41,9 @@ export interface LiveSession {
   refresh(): void;
   stop(): void;
 }
+
+type OnState = (state: LiveState) => void;
+type OnLimitExceeded = (event: RateLimitExceededEvent) => void;
 
 const SNAPSHOT_INTERVAL_MS = 10 * SECOND_MS;
 
@@ -111,122 +114,155 @@ function withRequest(
  */
 export function startLiveSession(
   session: Session,
-  onState: (state: LiveState) => void,
-  onLimitExceeded: (event: RateLimitExceededEvent) => void,
+  onState: OnState,
+  onLimitExceeded: OnLimitExceeded,
 ): LiveSession {
-  let held = initialState();
-  let stopped = false;
-  const socket = openSocket(session.token);
-  const active = () => !stopped && !session.signal.aborted;
+  return new SocketSession(session, onState, onLimitExceeded);
+}
 
-  function publish(change: Partial<LiveState>): void {
-    held = { ...held, ...change };
-    onState(held);
+class SocketSession implements LiveSession {
+  private held = initialState();
+  private stopped = false;
+  private readonly session: Session;
+  private readonly onState: OnState;
+  private readonly onLimitExceeded: OnLimitExceeded;
+  private readonly socket: LiveSocket;
+  private readonly unlisten: () => void;
+  private readonly interval: ReturnType<typeof setInterval>;
+  private readonly alarm = resetAlarm(() => this.refreshIfVisible());
+  private readonly loadSnapshot = oneAtATime(() => this.fetchSnapshot());
+
+  constructor(
+    session: Session,
+    onState: OnState,
+    onLimitExceeded: OnLimitExceeded,
+  ) {
+    this.session = session;
+    this.onState = onState;
+    this.onLimitExceeded = onLimitExceeded;
+    this.socket = openSocket(session.token);
+    this.unlisten = listen(this.socket, this.socketHandlers());
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+    this.interval = setInterval(
+      () => this.refreshIfVisible(),
+      SNAPSHOT_INTERVAL_MS,
+    );
+    session.signal.addEventListener('abort', this.stop, { once: true });
   }
 
-  const alarm = resetAlarm(() => {
-    if (pageVisible()) reconcile();
-  });
+  applyRow(row: UserRow): void {
+    const rows = this.rowsWith(row);
+    if (!rows) return;
+    this.publish({ rows });
+    this.alarm.aim(rows);
+  }
 
-  const loadSnapshot = oneAtATime(async () => {
-    if (!active()) return;
+  refresh(): void {
+    if (!this.active()) return;
+    // Fixture time stands still, so the tick is what makes panels reload.
+    this.publish({ now: clock(), tick: this.held.tick + 1 });
+    this.loadSnapshot();
+    this.alarm.aim(this.held.rows);
+  }
+
+  // Arrow fields: both are event listeners, called without a receiver.
+  readonly stop = (): void => {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.alarm.cancel();
+    clearInterval(this.interval);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    this.unlisten();
+    this.socket.disconnect();
+    this.session.signal.removeEventListener('abort', this.stop);
+  };
+
+  // Hidden: aiming again cancels the alarm, as a hidden page waits for none.
+  private readonly onVisibilityChange = (): void => {
+    if (pageVisible()) this.refresh();
+    else this.alarm.aim(this.held.rows);
+  };
+
+  private active(): boolean {
+    return !this.stopped && !this.session.signal.aborted;
+  }
+
+  private publish(change: Partial<LiveState>): void {
+    this.held = { ...this.held, ...change };
+    this.onState(this.held);
+  }
+
+  private refreshIfVisible(): void {
+    if (pageVisible()) this.refresh();
+  }
+
+  private async fetchSnapshot(): Promise<void> {
+    if (!this.active()) return;
     try {
-      const rows = await session.client.users();
-      if (!active()) return;
-      publish({
-        rows: applySnapshot(held.rows, rows),
+      const rows = await this.session.client.users();
+      if (!this.active()) return;
+      this.publish({
+        rows: applySnapshot(this.held.rows, rows),
         lastUpdateAt: new Date(clock()).toISOString(),
         snapshot: { status: 'loaded', error: null },
       });
-      alarm.aim(held.rows);
+      this.alarm.aim(this.held.rows);
     } catch (thrown) {
-      if (!active()) return;
+      if (!this.active()) return;
       const error = toError(thrown, 'The snapshot failed.');
-      publish({ snapshot: { status: 'error', error } });
+      this.publish({ snapshot: { status: 'error', error } });
     }
-  });
-
-  function reconcile(): void {
-    if (!active()) return;
-    // Fixture time stands still, so the tick is what makes panels reload.
-    publish({ now: clock(), tick: held.tick + 1 });
-    loadSnapshot();
-    alarm.aim(held.rows);
   }
 
   /** The rows with `row` applied, or null when the held row is not older. */
-  function rowsWith(row: UserRow): Rows | null {
-    if (!active()) return null;
-    const rows = applyRow(held.rows, row);
-    return rows === held.rows ? null : rows;
-  }
-
-  function applyResponseRow(row: UserRow): void {
-    const rows = rowsWith(row);
-    if (!rows) return;
-    publish({ rows });
-    alarm.aim(rows);
+  private rowsWith(row: UserRow): Rows | null {
+    if (!this.active()) return null;
+    const rows = applyRow(this.held.rows, row);
+    return rows === this.held.rows ? null : rows;
   }
 
   /** Returns false when the event is dropped whole: its row is not newer. */
-  function applyEvent(event: RateUpdateEvent | RateLimitExceededEvent) {
-    const rows = rowsWith(event.row);
+  private applyEvent(event: RateUpdateEvent | RateLimitExceededEvent): boolean {
+    const rows = this.rowsWith(event.row);
     if (!rows) return false;
     const { userId } = event.row;
-    const liveRecords = withRequest(held.liveRecords, userId, event.request);
-    publish({ rows, liveRecords, lastUpdateAt: event.at });
-    alarm.aim(rows);
+    const liveRecords = withRequest(
+      this.held.liveRecords,
+      userId,
+      event.request,
+    );
+    this.publish({ rows, liveRecords, lastUpdateAt: event.at });
+    this.alarm.aim(rows);
     return true;
   }
 
-  function showDisconnected(): void {
-    if (active()) publish({ connection: 'disconnected' });
+  private showDisconnected(): void {
+    if (this.active()) this.publish({ connection: 'disconnected' });
   }
 
-  const unlisten = listen(socket, {
-    connect: () => {
-      if (!active()) return;
-      publish({ connection: 'live' });
-      reconcile();
-    },
-    disconnect: showDisconnected,
-    // Socket.IO keeps retrying a network failure; a refused handshake is final.
-    connect_error: () => {
-      if (!active()) return;
-      if (socket.active) showDisconnected();
-      else session.onRefused();
-    },
-    // A payload that fails its shape check is ignored whole.
-    'rate:update': (event: unknown) => {
-      if (isRateUpdate(event)) applyEvent(event);
-    },
-    'rate:limit_exceeded': (event: unknown) => {
-      if (isLimitExceeded(event) && applyEvent(event)) onLimitExceeded(event);
-    },
-  });
-
-  // Hidden: aiming again cancels the alarm, as a hidden page waits for none.
-  function onVisibilityChange(): void {
-    if (pageVisible()) reconcile();
-    else alarm.aim(held.rows);
+  private socketHandlers(): SocketEvents {
+    return {
+      connect: () => {
+        if (!this.active()) return;
+        this.publish({ connection: 'live' });
+        this.refresh();
+      },
+      disconnect: () => this.showDisconnected(),
+      // Socket.IO keeps retrying a network failure; a refused handshake is final.
+      connect_error: () => {
+        if (!this.active()) return;
+        if (this.socket.active) this.showDisconnected();
+        else this.session.onRefused();
+      },
+      // A payload that fails its shape check is ignored whole.
+      'rate:update': (event: unknown) => {
+        if (isRateUpdate(event)) this.applyEvent(event);
+      },
+      'rate:limit_exceeded': (event: unknown) => {
+        if (isLimitExceeded(event) && this.applyEvent(event)) {
+          this.onLimitExceeded(event);
+        }
+      },
+    };
   }
-  document.addEventListener('visibilitychange', onVisibilityChange);
-
-  const interval = setInterval(() => {
-    if (pageVisible()) reconcile();
-  }, SNAPSHOT_INTERVAL_MS);
-
-  function stop(): void {
-    if (stopped) return;
-    stopped = true;
-    alarm.cancel();
-    clearInterval(interval);
-    document.removeEventListener('visibilitychange', onVisibilityChange);
-    unlisten();
-    socket.disconnect();
-    session.signal.removeEventListener('abort', stop);
-  }
-  session.signal.addEventListener('abort', stop, { once: true });
-
-  return { applyRow: applyResponseRow, refresh: reconcile, stop };
 }

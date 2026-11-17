@@ -20,34 +20,40 @@ const NOT_FOUND = 404;
 
 export const clock = () => Date.parse(NOW);
 
+/** Answers with `read()` after the delay; rejects at once when cancelled. */
+function delayed<T>(
+  read: () => T,
+  sessionSignal: AbortSignal,
+  requestSignal?: AbortSignal,
+): Promise<T> {
+  const signal = requestSignal
+    ? AbortSignal.any([sessionSignal, requestSignal])
+    : sessionSignal;
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const cancel = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', cancel);
+      try {
+        resolve(read());
+      } catch (error) {
+        reject(error);
+      }
+    }, RESPONSE_DELAY_MS);
+    signal.addEventListener('abort', cancel, { once: true });
+  });
+}
+
 export function createClient(options: ClientOptions): Client {
   const rows = new Map(users.map((row) => [row.userId, row]));
-
-  /** Answers with `read()` after the delay; rejects at once when cancelled. */
-  function delayed<T>(read: () => T, requestSignal?: AbortSignal): Promise<T> {
-    const signal = requestSignal
-      ? AbortSignal.any([options.signal, requestSignal])
-      : options.signal;
-    return new Promise((resolve, reject) => {
-      if (signal.aborted) {
-        reject(signal.reason);
-        return;
-      }
-      const cancel = () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      };
-      const timer = setTimeout(() => {
-        signal.removeEventListener('abort', cancel);
-        try {
-          resolve(read());
-        } catch (error) {
-          reject(error);
-        }
-      }, RESPONSE_DELAY_MS);
-      signal.addEventListener('abort', cancel, { once: true });
-    });
-  }
+  const respond = <T>(read: () => T, signal?: AbortSignal) =>
+    delayed(read, options.signal, signal);
 
   function row(id: string): UserRow {
     const found = rows.get(id);
@@ -57,7 +63,7 @@ export function createClient(options: ClientOptions): Client {
 
   // An action only raises the version; quota policy is not simulated here.
   const action = (id: string, signal?: AbortSignal) =>
-    delayed(() => {
+    respond(() => {
       const held = row(id);
       const updated = { ...held, version: held.version + 1 };
       rows.set(id, updated);
@@ -75,10 +81,10 @@ export function createClient(options: ClientOptions): Client {
   };
 
   return {
-    users: (signal) => delayed(() => [...rows.values()], signal),
-    detail: (id, signal) => delayed(() => detail(id), signal),
-    history: (id, range, signal) => delayed(() => history(id, range), signal),
-    analytics: (signal) => delayed(() => analytics, signal),
+    users: (signal) => respond(() => [...rows.values()], signal),
+    detail: (id, signal) => respond(() => detail(id), signal),
+    history: (id, range, signal) => respond(() => history(id, range), signal),
+    analytics: (signal) => respond(() => analytics, signal),
     reset: action,
     setLimit: (id, _body, signal) => action(id, signal),
     suspend: (id, _body, signal) => action(id, signal),

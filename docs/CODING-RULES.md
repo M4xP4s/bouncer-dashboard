@@ -70,6 +70,7 @@ if (outcome === 'denied') {
 | S2 | Extract response or message construction when it contains meaningful transformation or obscures the main flow. A simple object can stay inline. |
 | S3 | Share error handling when the failure meaning and recovery policy are the same. Matching `try`/`catch` syntax alone is insufficient. |
 | S4 | After boundary validation, trust the established type inside trusted code. Keep deliberate safety checks for framework wiring that the types cannot guarantee. |
+| S5 | A function has at most 50 lines, not counting blank lines and comments; lint enforces it. Test files are exempt, because a `describe` callback is one function that holds many tests. |
 
 ```ts
 // S1: the filter's catch() is three named steps.
