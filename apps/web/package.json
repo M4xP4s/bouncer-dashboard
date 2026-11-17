@@ -11,11 +11,13 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@mantine/charts": "^9.8.1",
     "@mantine/core": "^9.8.1",
     "@mantine/hooks": "^9.8.1",
     "@mantine/notifications": "^9.8.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "recharts": "^3.10.1",
     "socket.io-client": "^4.8.4"
   },
   "devDependencies": {

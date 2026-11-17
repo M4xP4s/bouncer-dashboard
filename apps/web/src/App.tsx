@@ -11,6 +11,9 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type { RateLimitExceededEvent } from '@app/contracts';
+import { AnalyticsCards } from './features/analytics/AnalyticsCards.tsx';
+import { UserDrawer } from './features/detail/UserDetail.tsx';
+import { UsersTable } from './features/table/UsersTable.tsx';
 import { type Connection, useLiveUsers } from './live/useLiveUsers.ts';
 import { SECOND_MS, utcTime } from './lib/time.ts';
 import { useSession, type Session } from './api/useSession.ts';
@@ -137,15 +140,31 @@ function Dashboard({
 }
 
 function DashboardContent({ session }: { session: Session }) {
+  const [selected, setSelected] = useState<string | null>(null);
   const live = useLiveUsers(session, showLimitAlert);
   return (
-    <Group justify="space-between" mb="md">
-      <Title order={1}>Rate limits</Title>
-      <ConnectionStatus
-        connection={live.connection}
-        lastUpdateAt={live.lastUpdateAt}
+    <>
+      <Group justify="space-between" mb="md">
+        <Title order={1}>Rate limits</Title>
+        <ConnectionStatus
+          connection={live.connection}
+          lastUpdateAt={live.lastUpdateAt}
+        />
+      </Group>
+      <AnalyticsCards session={session} tick={live.tick} />
+      <UsersTable
+        rows={live.rows}
+        snapshot={live.snapshot}
+        now={live.now}
+        onSelect={setSelected}
       />
-    </Group>
+      <UserDrawer
+        userId={selected}
+        onClose={() => setSelected(null)}
+        session={session}
+        live={live}
+      />
+    </>
   );
 }
 
