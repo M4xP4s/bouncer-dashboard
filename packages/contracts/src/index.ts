@@ -113,12 +113,7 @@ export interface Analytics {
 
 /** What caused a `rate:update`. */
 export type UpdateCause =
-  | 'request'
-  | 'reset'
-  | 'limit'
-  | 'suspend'
-  | 'unsuspend'
-  | 'extra';
+  'request' | 'reset' | 'limit' | 'suspend' | 'unsuspend' | 'extra';
 
 /** Payload of `rate:update`. */
 export interface RateUpdateEvent {
