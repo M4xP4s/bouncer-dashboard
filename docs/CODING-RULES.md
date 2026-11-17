@@ -133,10 +133,10 @@ The API lint run enforces
 with type-aware linting.
 [`no-misused-promises`](https://oxc.rs/docs/guide/usage/linter/rules/typescript/no-misused-promises.html)
 is not enabled, and the web lint run is not type-aware, so A2 and all web
-promise handling are checked in review. Its default
-`ignoreVoid: true` permits a bare `void`, so a passing lint run alone does not
-prove A1. These rules do not prove that required writes settle before a response;
-that needs the behavior checks in the owning specification.
+promise handling are checked in review. The default `ignoreVoid: true`
+of `no-floating-promises` permits a bare `void`, so a passing lint run
+alone does not prove A1. These rules do not prove that required writes settle
+before a response; that needs the behavior checks in the owning specification.
 
 ## NestJS responsibilities and lifetime
 
