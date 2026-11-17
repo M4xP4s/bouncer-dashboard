@@ -78,6 +78,8 @@ function recentRequestsOf(
   now: number,
 ): RequestRecord[] {
   const cutoff = now - HISTORY_TTL_MS;
+  // Only recordOutcome writes this list, as RequestRecord JSON. A change to
+  // that shape must stay compatible until the stored records expire.
   return storedRecords
     .map((record) => JSON.parse(record) as RequestRecord)
     .filter((record) => Date.parse(record.at) > cutoff)
