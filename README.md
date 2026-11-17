@@ -1,3 +1,5 @@
+![bouncer-dashboard — illustrated bouncer filtering requests beside a monitoring dashboard](docs/images/bouncer-banner.jpeg)
+
 # bouncer-dashboard
 
 A per-user API rate limiter built as a NestJS interceptor, with a live React and TypeScript dashboard for administering it. Shared quota state lives in Redis so several API processes enforce one limit; changes reach the dashboard over WebSockets.
@@ -11,6 +13,26 @@ The project was developed in a private repository, specification first, with AI 
 - Commit dates are those of the replay, not of the original development.
 
 The replay is in progress; the merged pull requests show how far it has come.
+
+## Commands
+
+Node.js 22.22.3 or later (the exact ranges are in `engines` in
+`package.json`), and Docker for Redis.
+
+```sh
+npm ci
+npm run build
+npm run lint
+npm test                            # needs nothing running
+```
+
+To run the API on the host:
+
+```sh
+docker compose up -d redis          # Redis on 127.0.0.1:6379
+cp .env.example .env                # demo values; each one is explained there
+npm run start:dev -w apps/api       # http://localhost:3000
+```
 
 ## Documentation
 
