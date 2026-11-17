@@ -319,6 +319,8 @@ it.each([
 it('shows analytics values and their definitions', async () => {
   const { client, session } = setup();
   client.analytics.mockResolvedValue({
+    startedAt: NOW,
+    completedAt: NOW,
     totalUsers: 12,
     activeUsers: 4,
     nearLimitPercent: 50,

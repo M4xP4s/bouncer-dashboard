@@ -14,10 +14,8 @@ export interface AppConfig {
   redisUrl: string;
   /** Demo authentication: the one admin credential. */
   adminToken: string;
-  /** Demo authentication: bearer token to user ID. */
+  /** DEMO_USERS, registered at start-up: bearer token to user ID. May be empty. */
   userIdByToken: ReadonlyMap<string, string>;
-  /** Every seeded user ID. These are the only users that exist. */
-  userIds: ReadonlySet<string>;
 }
 
 /** Injection token for the validated configuration. */
@@ -26,11 +24,11 @@ export const APP_CONFIG = Symbol('APP_CONFIG');
 // A user ID becomes part of Redis key names (`rl:win:{u}:{h}`) and of URLs.
 // Keeping it to these characters means it can never contain the `:` that
 // separates the parts of a key, or anything that needs escaping in a path.
-const USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export const USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 // The characters RFC 6750 allows in a bearer token. No whitespace, and no
 // `:` or `,`, which are the separators inside DEMO_USERS.
-const TOKEN = /^[A-Za-z0-9._~+/=-]+$/;
+export const TOKEN = /^[A-Za-z0-9._~+/=-]+$/;
 
 /** A redis:// or rediss:// URL with a host and, if given, a whole-number database. */
 function isRedisUrl(value: string): boolean {
@@ -88,9 +86,6 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   const userIdByToken = new Map<string, string>();
   const userIds = new Set<string>();
   const entries = (env.DEMO_USERS ?? '').split(',').filter(Boolean);
-  if (entries.length === 0) {
-    problems.push('DEMO_USERS must list at least one userId:token pair');
-  }
   entries.forEach((entry, index) => {
     const pair = entry.split(':');
     const problem = demoUserProblem(pair, userIds, userIdByToken, adminToken);
@@ -106,5 +101,5 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   if (problems.length > 0) {
     throw new Error(`Invalid configuration:\n- ${problems.join('\n- ')}`);
   }
-  return { port, redisUrl, adminToken, userIdByToken, userIds };
+  return { port, redisUrl, adminToken, userIdByToken };
 }

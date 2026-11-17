@@ -82,6 +82,33 @@ export interface HistoryBucket {
   denied: number;
 }
 
+/** A read made of several commands: when it began and ended. Not one atomic snapshot. */
+export interface ReadInterval {
+  startedAt: string;
+  completedAt: string;
+}
+
+// -------------------------------------------------------------- user list
+
+export type ActivePeriod = '5m' | '1h' | '24h';
+
+/** Query of `GET /api/admin/users`. Filters apply to every registered user before the page is cut. */
+export interface UsersQuery {
+  page: number;
+  pageSize: number;
+  search: string;
+  status: Status | 'any';
+  active: ActivePeriod | 'any';
+}
+
+/** Body of `GET /api/admin/users`. `total` counts every match, not only this page. */
+export interface UsersPage extends ReadInterval {
+  rows: UserRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 // -------------------------------------------------------------- analytics
 
 export interface TopUser {
@@ -91,7 +118,7 @@ export interface TopUser {
 }
 
 /** Body of `GET /api/admin/analytics`. */
-export interface Analytics {
+export interface Analytics extends ReadInterval {
   /** All registered users. */
   totalUsers: number;
   /** Users with at least one counted request in the current window. */

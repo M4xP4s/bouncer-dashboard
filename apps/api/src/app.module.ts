@@ -2,7 +2,11 @@ import { join } from 'node:path';
 import { Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { ServeStaticModule } from '@nestjs/serve-static';
-import { AdminController, SeededUserPipe } from './admin/admin.controller.js';
+import {
+  AdminController,
+  RegisteredUserInterceptor,
+} from './admin/admin.controller.js';
+import { UserReads } from './admin/user-reads.js';
 import { AdminTokenGuard } from './auth/admin-token.guard.js';
 import { ApiErrorFilter } from './api-error.filter.js';
 import { UserTokenGuard } from './auth/user-token.guard.js';
@@ -14,6 +18,7 @@ import { RateLimitInterceptor } from './rate-limit/rate-limit.interceptor.js';
 import { RateLimitStore } from './rate-limit/rate-limit.store.js';
 import { RedisModule } from './redis/redis.module.js';
 import { SampleController } from './sample/sample.controller.js';
+import { UserRegistry } from './users/user-registry.js';
 
 @Module({
   imports: [
@@ -33,8 +38,10 @@ import { SampleController } from './sample/sample.controller.js';
     LiveGateway,
     UserTokenGuard,
     AdminTokenGuard,
-    SeededUserPipe,
+    RegisteredUserInterceptor,
     RateLimitStore,
+    UserRegistry,
+    UserReads,
     RateLimitInterceptor,
   ],
 })

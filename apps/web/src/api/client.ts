@@ -14,7 +14,7 @@ import {
   isDetail,
   isHistory,
   isUserRow,
-  isUsers,
+  isUsersPage,
 } from './validation.ts';
 
 const ADMIN_PATH = '/api/admin';
@@ -102,7 +102,9 @@ export function createClient(options: ClientOptions): Client {
     call(isUserRow, path, { ...init, method });
 
   return {
-    users: (signal) => call(isUsers, `${ADMIN_PATH}/users`, { signal }),
+    // Until the table pages, it shows the first page of the list.
+    users: async (signal) =>
+      (await call(isUsersPage, `${ADMIN_PATH}/users`, { signal })).rows,
     detail: (id, signal) => call(isDetail, userPath(id), { signal }),
     history: (id, range, signal) =>
       call(isHistory, `${userPath(id)}/history?range=${range}`, { signal }),

@@ -9,7 +9,7 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AdminForms } from '../features/admin/AdminForms.tsx';
-import { analytics, users } from '../fixtures/index.ts';
+import { analytics, NOW, users } from '../fixtures/index.ts';
 import { deferred, mockSocket } from '../lib/test-helpers.ts';
 import { useRequest } from '../lib/useRequest.ts';
 import { useLiveUsers, type LiveUsers } from '../live/useLiveUsers.ts';
@@ -134,7 +134,16 @@ function body(path: string, owner: 'old' | 'new'): unknown {
   const row = { ...users[0], userId: `${owner}-row` };
   if (path.endsWith('/analytics'))
     return { ...analytics, totalUsers: owner === 'new' ? 42 : 99 };
-  if (path.endsWith('/users')) return [row];
+  if (path.endsWith('/users')) {
+    return {
+      rows: [row],
+      total: 1,
+      page: 1,
+      pageSize: 50,
+      startedAt: NOW,
+      completedAt: NOW,
+    };
+  }
   return { row, recentRequests: [] };
 }
 

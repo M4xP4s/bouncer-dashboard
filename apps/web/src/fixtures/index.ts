@@ -328,6 +328,8 @@ export const historyDay: HistoryBucket[] = Array.from(
 
 /** Body of `GET /api/admin/analytics`, consistent with `users`. */
 export const analytics: Analytics = {
+  startedAt: NOW,
+  completedAt: NOW,
   totalUsers: 12,
   activeUsers: 11,
   // 7 of the 11 active users are Warning or Exceeded.

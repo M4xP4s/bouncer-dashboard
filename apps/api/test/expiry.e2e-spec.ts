@@ -3,6 +3,7 @@ import {
   HOUR_MS,
   MINUTE_MS,
   NEXT_HOUR,
+  REGISTRY_KEY_NAMES,
   SECOND_MS,
   type TestApplication,
   TEST_NOW,
@@ -45,7 +46,11 @@ describe('bounded retention and idle expiry', () => {
       'rl:hist:user-01': DAY_MS,
       'rl:denied:2099-01-01': 2 * DAY_MS,
     };
-    const permanent = ['rl:limit:user-01', 'rl:user:user-01'];
+    const permanent = [
+      'rl:limit:user-01',
+      'rl:user:user-01',
+      ...REGISTRY_KEY_NAMES,
+    ];
     const started = performance.now();
 
     await touchEveryKey(api);
