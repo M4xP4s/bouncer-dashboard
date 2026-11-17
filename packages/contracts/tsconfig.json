@@ -1,0 +1,18 @@
+{
+  // Type-checks the shared types and the frontend fixtures that must match
+  // them. Emits nothing. Once apps/web has its own tsconfig the fixtures are
+  // checked there as well; this include keeps `npm run check:contracts`
+  // independent of either application.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023", "dom"],
+    "types": [],
+    "module": "nodenext",
+    "strict": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "../../apps/web/src/fixtures"]
+}
