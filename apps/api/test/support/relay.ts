@@ -71,3 +71,21 @@ export class Relay {
     upstream.on('close', drop).on('error', drop);
   }
 }
+
+const REDIS_DEFAULT_PORT = 6379;
+
+/** A relay in front of the Redis server that `target` names. */
+export function relayToRedis(target: URL): Relay {
+  // Through the relay, TLS would check the certificate against 127.0.0.1.
+  if (target.protocol !== 'redis:')
+    throw new Error(`The relay supports redis: URLs, not ${target.protocol}`);
+  return new Relay(target.hostname, Number(target.port || REDIS_DEFAULT_PORT));
+}
+
+/** `target` with its host and port replaced by those of the relay. */
+export function throughRelay(target: URL, relayPort: number): string {
+  const url = new URL(target);
+  url.hostname = '127.0.0.1';
+  url.port = String(relayPort);
+  return url.href;
+}

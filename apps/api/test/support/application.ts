@@ -12,7 +12,13 @@ import { io, type Socket } from 'socket.io-client';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/configure-app.js';
-import { REDIS, type RedisClient } from '../../src/redis/redis.module.js';
+import {
+  closeRedis,
+  connectRedis,
+  REDIS,
+  type RedisClient,
+} from '../../src/redis/redis.module.js';
+import { type Relay, throughRelay } from './relay.js';
 
 export const SECOND_MS = 1000;
 export const MINUTE_MS = 60 * SECOND_MS;
@@ -187,6 +193,40 @@ export function useFrozenApplication() {
   return () => {
     if (!application) throw new Error('The application did not start');
     return application;
+  };
+}
+
+/**
+ * Starts the application on a relay in front of the test Redis for each test
+ * and empties the database around it.
+ */
+export function useRelayedApplication(relay: Relay, target: URL) {
+  let api: TestApplication | undefined;
+  let inspector: RedisClient | undefined;
+  beforeEach(async () => {
+    // Connected directly, so it can empty the database whatever the relay does.
+    inspector = await connectRedis(target.href, 'test-inspector');
+    await inspector.flushDb();
+    vi.stubEnv('REDIS_URL', throughRelay(target, await relay.start()));
+    api = await TestApplication.start();
+  });
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    const connected = inspector;
+    inspector = undefined;
+    try {
+      await api?.close();
+    } finally {
+      api = undefined;
+      await relay.stop();
+      // Unset when set-up failed before it connected; that error is reported.
+      if (connected)
+        await connected.flushDb().finally(() => closeRedis(connected));
+    }
+  });
+  return () => {
+    if (!api) throw new Error('The application did not start');
+    return api;
   };
 }
 

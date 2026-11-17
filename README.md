@@ -25,8 +25,23 @@ npm run build
 npm run lint
 npm test                            # needs nothing running
 npm run check:contracts             # the fixture data against its own rules
-npm run test:integration            # empties database 1 of the Redis on :6379, or TEST_REDIS_URL
+npm run test:integration            # needs a Redis server of its own, below
 ```
+
+The integration suite empties database 1 of its Redis, and the API's events
+travel over Redis Pub/Sub, which every database of a server shares: a
+development API on the same server would exchange events with the suite. Give
+it a server of its own, and never run it twice at the same time:
+
+```sh
+docker run -d --rm --name bouncer-test-redis -p 127.0.0.1:6380:6379 redis:8-alpine
+export TEST_REDIS_URL=redis://127.0.0.1:6380/1
+npm run test:integration
+docker stop bouncer-test-redis
+```
+
+Without `TEST_REDIS_URL`, the suite uses database 1 of the Compose Redis on
+:6379; nothing else may use that server while it runs.
 
 To run the API and the dashboard on the host:
 
