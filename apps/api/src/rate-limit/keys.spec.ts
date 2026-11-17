@@ -64,4 +64,14 @@ describe('key names', () => {
       `rl:notified:User_03-A:${hour}:7`,
     );
   });
+
+  it('starts a new window key at the hour boundary', () => {
+    const nextHour = at('2026-11-16T11:00:00.000Z');
+
+    const lastKey = keys.window('user-01', at('2026-11-16T10:59:59.999Z'));
+    const nextKey = keys.window('user-01', nextHour);
+
+    expect(lastKey).toBe(`rl:win:user-01:${hour}`);
+    expect(nextKey).toBe(`rl:win:user-01:${nextHour}`);
+  });
 });
