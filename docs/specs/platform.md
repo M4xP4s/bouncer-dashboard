@@ -2,9 +2,10 @@
 
 ## Scope
 
-The workspace, start-up configuration, who a caller is, the Redis connection
-and the error response. Items are cited as [the requirements][req] name them:
-*Backend N*, *Core feature N*, *Submission*, *Expectation: quality*.
+The workspace, start-up configuration, who a caller is, the Redis connection,
+the health route and the error response. Items are cited as
+[the requirements][req] name them: *Backend N*, *Core feature N*,
+*Submission*, *Expectation: quality*.
 
 ## Behavior
 
@@ -47,6 +48,11 @@ and the error response. Items are cited as [the requirements][req] name them:
    [rate limiting](rate-limiting.md#behavior). The client then reconnects
    every 500 ms and the API serves again without a restart. A Redis that is
    stopped, not hung, is noticed at once. (Expectation: reliability)
+8. **Addition: `GET /api/health`, without a credential.** It answers 200
+   `HealthResponse` when Redis answers a `PING`, else a 503 `ApiError`
+   "Redis is not reachable." within the bound of rule 7, so a readiness
+   check covers the store that every request needs. (Expectation:
+   reliability)
 
 The start-up of rules 2 and 5, and the outage of rule 7, in one picture:
 
@@ -137,6 +143,9 @@ Unit, no Redis (`npm test`):
   both cases the same client works once it answers again; a system time
   that jumps forward does not close a healthy connection; a closed
   connection keeps neither the watchdog's timer nor its listeners.
+- `apps/api/src/health/health.controller.spec.ts`: 200 when `PING` answers;
+  a failed `PING` is the 503 body of rule 8; while the connection is down
+  the 503 comes without a `PING`.
 
 Real store (run as in [rate limiting](rate-limiting.md#test-plan)):
 - `apps/api/test/outage.e2e-spec.ts`: behind a TCP relay that is stopped,
@@ -144,6 +153,10 @@ Real store (run as in [rate limiting](rate-limiting.md#test-plan)):
   an admin action get a 503 without `x-count` within 5 s and later ones
   within 0.5 s; once the relay passes traffic again both succeed without a
   restart.
+- `apps/api/test/health.e2e-spec.ts`: without a credential, health is 200;
+  behind a stopped relay it is the 503 of rule 8; behind a frozen one, the
+  same 503 within 5 s and later ones within 0.5 s; 200 again once the relay
+  passes traffic.
 
 Rule 4: the handshake cases are in the test plan of
 [live updates](live-updates.md#test-plan); a missing and a user token on
@@ -161,12 +174,15 @@ node apps/api/dist/main.js     # with nothing listening on port 6379
 docker compose up -d redis
 npm run start:dev -w apps/api  # leave running
 curl -i localhost:3000/api/nothing
+curl -s localhost:3000/api/health
 ```
 
 The first line exits 0. The third exits 1 with `Invalid configuration:` and
 `- PORT must be a whole number from 1 to 65535`; the fourth exits 1 with
 `Cannot connect to Redis at localhost:6379` and the advice to start it. The
-`curl` shows a 404 `ApiError` saying `Cannot GET /api/nothing`.
+first `curl` shows a 404 `ApiError` saying `Cannot GET /api/nothing`; the
+second prints `{"status":"ok"}`, and after `docker compose stop redis` a 503
+`ApiError` saying `Redis is not reachable.`
 
 ## Limits
 

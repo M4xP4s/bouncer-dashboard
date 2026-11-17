@@ -1,18 +1,14 @@
 import type { Response } from 'supertest';
 import { loadConfig } from '../src/config/config.js';
 import {
-  closeRedis,
-  connectRedis,
-  type RedisClient,
-} from '../src/redis/redis.module.js';
-import { SECOND_MS, TestApplication } from './support/application.js';
-import { Relay } from './support/relay.js';
+  FIRST_FAILURE_LIMIT_MS,
+  LATER_FAILURE_LIMIT_MS,
+  SECOND_MS,
+  type TestApplication,
+  useRelayedApplication,
+} from './support/application.js';
+import { type Relay, relayToRedis } from './support/relay.js';
 
-const REDIS_DEFAULT_PORT = 6379;
-// Platform rule 7 notices a silent Redis within about 4 s.
-const FIRST_FAILURE_LIMIT_MS = 5 * SECOND_MS;
-// Once the outage is known, a call must fail at once, not wait again.
-const LATER_FAILURE_LIMIT_MS = SECOND_MS / 2;
 const LATER_ROUNDS = 3;
 const TRAFFIC_INTERVAL_MS = 200;
 const RECOVERY_WAIT_MS = 8 * SECOND_MS;
@@ -22,47 +18,6 @@ const OUTAGES = [
   ['stopped', (relay: Relay) => relay.stop(), (relay: Relay) => relay.start()],
   ['hung', (relay: Relay) => relay.freeze(), (relay: Relay) => relay.thaw()],
 ] as const;
-
-function throughRelay(target: URL, port: number): string {
-  const url = new URL(target);
-  url.hostname = '127.0.0.1';
-  url.port = String(port);
-  return url.href;
-}
-
-/**
- * Starts the application on a relay in front of the test Redis for each test
- * and empties the database around it.
- */
-function useRelayedApplication(relay: Relay, target: URL) {
-  let api: TestApplication | undefined;
-  let inspector: RedisClient | undefined;
-  beforeEach(async () => {
-    // Connected directly, so it can empty the database whatever the relay does.
-    inspector = await connectRedis(target.href, 'outage-test-inspector');
-    await inspector.flushDb();
-    vi.stubEnv('REDIS_URL', throughRelay(target, await relay.start()));
-    api = await TestApplication.start();
-  });
-  afterEach(async () => {
-    vi.unstubAllEnvs();
-    const connected = inspector;
-    inspector = undefined;
-    try {
-      await api?.close();
-    } finally {
-      api = undefined;
-      await relay.stop();
-      // Unset when set-up failed before it connected; that error is reported.
-      if (connected)
-        await connected.flushDb().finally(() => closeRedis(connected));
-    }
-  });
-  return () => {
-    if (!api) throw new Error('The application did not start');
-    return api;
-  };
-}
 
 async function timed(call: PromiseLike<Response>) {
   const started = performance.now();
@@ -112,10 +67,7 @@ function expectUnavailableWithin(
 
 describe('HTTP through a Redis outage', () => {
   const target = new URL(loadConfig(process.env).redisUrl);
-  const relay = new Relay(
-    target.hostname,
-    Number(target.port || REDIS_DEFAULT_PORT),
-  );
+  const relay = relayToRedis(target);
   const application = useRelayedApplication(relay, target);
 
   it.each(OUTAGES)(

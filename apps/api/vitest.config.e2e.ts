@@ -12,8 +12,8 @@ export default defineConfig({
     env: {
       // Required by the configuration; the tests listen on a free port.
       PORT: '3000',
-      // Database 1, so development data in database 0 is left alone. Two
-      // checkouts that run the suite at once each need their own server.
+      // Database 1 keeps development keys apart, but Pub/Sub spans every
+      // database, so the server must be the suite's own (see the README).
       REDIS_URL: process.env.TEST_REDIS_URL ?? 'redis://localhost:6379/1',
       ADMIN_TOKEN: 'test-admin-token',
       DEMO_USERS:

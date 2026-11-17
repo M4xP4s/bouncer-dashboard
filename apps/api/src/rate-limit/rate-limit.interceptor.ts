@@ -6,17 +6,12 @@ import {
   Injectable,
   Logger,
   type NestInterceptor,
-  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
-import type {
-  ApiError,
-  RateLimitedError,
-  RequestRecord,
-  UserRow,
-} from '@app/contracts';
+import type { RateLimitedError, RequestRecord, UserRow } from '@app/contracts';
 import type { Response } from 'express';
 import type { Observable } from 'rxjs';
+import { serviceUnavailable } from '../api-error.filter.js';
 import {
   type AuthenticatedRequest,
   USER_TOKEN_REQUIRED,
@@ -115,12 +110,10 @@ export class RateLimitInterceptor implements NestInterceptor {
       this.logger.error('admission failed', error.cause);
       // The transaction may or may not have run, so the message makes no
       // claim about the quota.
-      const body: ApiError = {
-        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
-        error: 'Service Unavailable',
-        message: 'The request was not processed. It may be retried.',
-      };
-      throw new ServiceUnavailableException(body, { cause: error });
+      throw serviceUnavailable(
+        'The request was not processed. It may be retried.',
+        error,
+      );
     }
   }
 

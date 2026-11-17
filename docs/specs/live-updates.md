@@ -55,13 +55,20 @@ expectations.
     successful snapshot; connecting alone does not set it. (Core feature 1)
 11. One hook owns the socket, removes the callbacks and timers it added and
     does nothing after its session ends ([P21]). (Expectation: maintainability)
+12. An event reaches the dashboards of every API process that shares the
+    Redis, not only those of the process that sent it ([P20]). A failed relay
+    is logged and never fails a request or ends the process; after a Redis
+    outage, relaying resumes without a restart. (Expectation: scalability;
+    Expectation: reliability)
 
 ## Interface
 
 Socket.IO on the HTTP port, default path and namespace, server to client:
 `rate:update` (`RateUpdateEvent`, rule 1) and `rate:limit_exceeded`
 (`RateLimitExceededEvent`, rule 2). The shared `ServerToClientEvents` map types
-every emit, so a renamed event fails to compile ([P1]).
+every emit, so a renamed event fails to compile ([P1]). Between API processes,
+the Socket.IO Redis adapter relays each emit over Redis Pub/Sub, on channels
+named with the prefix `socket.io` (rule 12).
 
 ## Decisions
 
@@ -85,6 +92,19 @@ row. Last arrival wins undoes a newer event; cancelling a snapshot can starve
 the display. Cost: a read every 10 seconds per visible dashboard (unmeasured),
 and that long a stale row for changes no event carries. Cases: browser tests.
 
+**Socket.IO Redis adapter.** A dashboard connected to one API process must see
+the decisions of another ([P20]). The adapter publishes every emit on Redis and
+each process delivers it to its own sockets. It does not await its Redis
+commands, so with Redis down an emit would become an unhandled rejection, which
+ends a Node process; its two connections therefore report a failed command
+instead, and are separate from the main client so that this changes nothing
+else. A reconnect restores only the subscriptions Redis confirmed, so a
+subscription that failed with its connection is sent again once it is back.
+Alternatives: one process, whose events stay local; a hand-written Pub/Sub
+channel, which repeats the adapter; a message broker, a new service. Cost: two
+more Redis connections per process, and an event emitted while Redis is
+unreachable is lost. Cases: the delivery rows of the test plan.
+
 ## Test plan
 
 | Mocked store (`npm test`) | Cases |
@@ -92,6 +112,7 @@ and that long a stale row for changes no event carries. Cases: browser tests.
 | `apps/api/src/live/live.gateway.spec.ts`, `apps/api/src/rate-limit/rate-limit.interceptor.spec.ts` | Admin handshake accepted; missing, wrong and user tokens refused. A failing emit is logged, not thrown; admissions, also bypassed, emit `rate:update`; rejections do not; only a first rejection alerts; a failed recording never alerts. |
 | `apps/api/src/rate-limit/rate-limit.store.spec.ts` | The version rises once per admission and is read in the same transaction; the alert flag is keyed by the generation read with the decision. Admin actions increment the version and re-arm the alert where required. |
 | `apps/api/src/admin/admin.controller.spec.ts` | Successful actions wait for the write, then emit the same row they return; failed actions never emit. |
+| `apps/api/src/live/redis-io.adapter.spec.ts` | A failed publish is reported and resolves; a working one still publishes; a failed subscription is reported and sent again once the connection is ready. |
 
 | Browser environment (`npm test`) | Cases |
 | --- | --- |
@@ -103,6 +124,11 @@ and that long a stale row for changes no event carries. Cases: browser tests.
 | `apps/api/test/live-events.e2e-spec.ts` | An admitted request reaches a connected socket client as `rate:update` with the exact row and request. |
 | `apps/api/test/alerts.e2e-spec.ts` | One `rate:limit_exceeded` per burst of rejections; a reset, a grant and a limit change each re-arm it without alerting; a rejection recorded late cannot use up the alert of the generation after such an action. |
 | `apps/api/test/admin-http.e2e-spec.ts` | A handshake with a missing or a user token is refused; every request and every admin action emits its full row with a rising version. |
+| `apps/api/test/cross-process.e2e-spec.ts` | A request to one application reaches a dashboard connected to a second one on the same Redis; a server on the Redis adapter refuses a dashboard with a wrong token; a dashboard whose application loses its Redis connection and gets it back, without a restart, receives the event of a request to the other application. With Redis stopped, a publish is reported, not rejected; a subscription survives a hang and the reconnect that follows it. |
+
+| Two processes ([how to run](../../README.md#commands)) | Cases |
+| --- | --- |
+| `scripts/two-process-check.mjs` | One dashboard per process, connected before a burst that both processes serve, each receive the burst's single `rate:limit_exceeded`, with the same request ID: one process emitted it, so the other received it through Redis. A request and a reset handled by the second process reach a dashboard connected to the first. |
 
 ## Milestone
 
@@ -139,10 +165,21 @@ call answers 429 and prints nothing. With `npm run dev` and the
 [dashboard](dashboard.md#behavior) signed in, repeat the first request: the
 `user-03` row changes in place, with no request made because of the event.
 
+Across processes, on the Redis server of the
+[real-store suite](rate-limiting.md#test-plan), whose database the check
+empties:
+`npm run build && npm run check:two-process`. The output contains
+`One rate:limit_exceeded event, the same at the dashboards on both processes`,
+`Cross-process request event received` and `Cross-process reset event received`,
+and the exit code is 0.
+
 ## Limits
 
-- Events reach clients connected to this API process only.
-
+- Two processes emit in no set order; the version orders the rows (rule 7). A
+  client that polls through a load balancer needs session affinity, which is
+  neither provided nor tested.
+- Delivery across processes is shown on two processes of one host and one
+  Redis, not under load. No throughput or latency figure is measured.
 - Events are not stored, replayed or acknowledged; during a suspension every
   request sends an update, so volume has no bound there.
 

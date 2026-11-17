@@ -174,6 +174,11 @@ export interface SampleResponse {
   at: string;
 }
 
+/** Body of `GET /api/health` while Redis answers. */
+export interface HealthResponse {
+  status: 'ok';
+}
+
 /** Body of every error response. */
 export interface ApiError {
   statusCode: number;

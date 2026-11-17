@@ -5,8 +5,10 @@ import {
   HttpException,
   HttpStatus,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
+import type { ApiError } from '@app/contracts';
 import { StoreUnavailable } from './rate-limit/rate-limit.store.js';
 
 /** Keep middleware and route errors in one envelope without exposing defects. */
@@ -54,6 +56,18 @@ export class ApiErrorFilter extends BaseExceptionFilter<unknown> {
     this.logger.error('Unexpected API error', error);
     return { statusCode: 500, payload: 'Internal server error' };
   }
+}
+
+export function serviceUnavailable(
+  message: string,
+  cause: unknown,
+): ServiceUnavailableException {
+  const body: ApiError = {
+    statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+    error: 'Service Unavailable',
+    message,
+  };
+  return new ServiceUnavailableException(body, { cause });
 }
 
 function errorNameOf(body: object, fallback: string): string {
