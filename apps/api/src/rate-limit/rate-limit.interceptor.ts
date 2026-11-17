@@ -12,7 +12,10 @@ import {
 import type { ApiError, RateLimitedError, RequestRecord } from '@app/contracts';
 import type { Response } from 'express';
 import type { Observable } from 'rxjs';
-import type { AuthenticatedRequest } from '../auth/user-token.guard.js';
+import {
+  type AuthenticatedRequest,
+  USER_TOKEN_REQUIRED,
+} from '../auth/user-token.guard.js';
 import { LiveGateway } from '../live/live.gateway.js';
 import { retryAfterSeconds } from './keys.js';
 import {
@@ -21,16 +24,9 @@ import {
   StoreUnavailable,
 } from './rate-limit.store.js';
 
-/**
- * Per-user rate limiting for the routes it is applied to.
- *
- * It only translates: the store counts and decides, and this class turns
- * the decision into HTTP. Admitted: `x-count` with the remaining quota,
- * `rate:update` to the dashboards, then the handler. Rejected: 429 with
- * `Retry-After`, and the handler does not run.
- *
- * It must run after `UserTokenGuard`, which supplies the user ID.
- */
+const COUNT_HEADER = 'x-count';
+
+// Runs after UserTokenGuard; translates the store’s decision into HTTP.
 @Injectable()
 export class RateLimitInterceptor implements NestInterceptor {
   private readonly logger = new Logger(RateLimitInterceptor.name);
@@ -48,7 +44,7 @@ export class RateLimitInterceptor implements NestInterceptor {
     const { userId } = http.getRequest<AuthenticatedRequest>();
     // Misapplying this interceptor without its guard must never create a shared bucket.
     if (typeof userId !== 'string' || userId.length === 0) {
-      throw new UnauthorizedException('A valid user token is required.');
+      throw new UnauthorizedException(USER_TOKEN_REQUIRED);
     }
     const response = http.getResponse<Response>();
     // The clock is read once. This one value selects the window, stamps the
@@ -73,7 +69,7 @@ export class RateLimitInterceptor implements NestInterceptor {
       }
       const seconds = retryAfterSeconds(now);
       response.setHeader('Retry-After', `${seconds}`);
-      response.setHeader('x-count', '0');
+      response.setHeader(COUNT_HEADER, '0');
       const body: RateLimitedError = {
         statusCode: 429,
         error: 'Too Many Requests',
@@ -88,7 +84,7 @@ export class RateLimitInterceptor implements NestInterceptor {
 
     // The remaining quota of the admission that just happened, taken from
     // the row that admission produced. It is never computed a second time.
-    response.setHeader('x-count', `${row.remaining}`);
+    response.setHeader(COUNT_HEADER, `${row.remaining}`);
     this.live.emitUpdate({ cause: 'request', at, row, request });
 
     // From here the request is counted, whatever the handler does. There is

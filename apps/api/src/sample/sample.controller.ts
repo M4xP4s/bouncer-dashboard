@@ -13,13 +13,7 @@ import {
 } from '../auth/user-token.guard.js';
 import { RateLimitInterceptor } from '../rate-limit/rate-limit.interceptor.js';
 
-/**
- * The rate-limited demo route: stands in for any endpoint a user calls.
- *
- * The guard runs first and identifies the user; the interceptor then counts
- * the request against that user's quota. Admin and dashboard routes carry
- * neither, so watching the dashboard never uses anyone's quota.
- */
+// Authenticate first, then charge both sample routes against the same user quota.
 @Controller('sample')
 @UseGuards(UserTokenGuard)
 @UseInterceptors(RateLimitInterceptor)

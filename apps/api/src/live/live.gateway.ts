@@ -15,11 +15,7 @@ import type { Server } from 'socket.io';
 import { sameToken } from '../auth/token.js';
 import { APP_CONFIG, type AppConfig } from '../config/config.js';
 
-/**
- * The Socket.IO server the admin dashboard connects to: same port as HTTP,
- * default path and namespace. Every connected dashboard receives every
- * event; the server listens for nothing.
- */
+// Every authenticated dashboard on this process receives every event.
 @WebSocketGateway()
 export class LiveGateway implements OnGatewayInit {
   private readonly logger = new Logger(LiveGateway.name);
@@ -30,12 +26,7 @@ export class LiveGateway implements OnGatewayInit {
 
   constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
 
-  /**
-   * Refuses a connection that does not present the admin token (demo
-   * authentication, like the HTTP admin routes). Events carry every user's
-   * usage, so the check runs in the handshake, before the socket can
-   * receive anything.
-   */
+  // Events expose all users’ usage, so authenticate before the socket receives any.
   afterInit(server: Server): void {
     server.use((socket, next) => {
       const { token } = socket.handshake.auth as Partial<SocketAuth>;
@@ -45,14 +36,7 @@ export class LiveGateway implements OnGatewayInit {
     });
   }
 
-  /**
-   * Sends `rate:update` from this process; the Redis adapter carries it to
-   * dashboards connected to other API processes.
-   *
-   * Never throws. The request or admin action that caused the event has
-   * already been decided and must not fail because a dashboard could not be
-   * told; the dashboard's next snapshot repairs what it missed.
-   */
+  // Delivery failure must not change an already committed quota decision.
   emitUpdate(event: RateUpdateEvent): void {
     try {
       this.server.emit('rate:update', event);

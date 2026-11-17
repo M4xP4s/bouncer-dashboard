@@ -1,12 +1,4 @@
-/**
- * Window times and Redis key names, derived from the user ID and request
- * time. This is the
- * only file that spells a key name.
- *
- * Every time is milliseconds since the epoch, read once per request from
- * the process clock. Windows are UTC clock hours, so a window is identified
- * by its start.
- */
+// UTC clock-hour windows; all times are milliseconds since the epoch.
 
 const HOUR_MS = 3_600_000;
 
@@ -23,13 +15,8 @@ export const resetAt = (now: number): number => windowStart(now) + HOUR_MS;
 export const retryAfterSeconds = (now: number): number =>
   Math.max(1, Math.ceil((resetAt(now) - now) / 1000));
 
-/**
- * When Redis may delete a window key: one hour after the window ends, not
- * at the boundary. The hour is in the key name, so the key stops being read
- * at the boundary anyway. Expiring it exactly then would let a process whose
- * clock is slightly behind write to a key Redis has already deleted, read a
- * count of 1 and admit the request.
- */
+// Keep the old hour for slow clocks: deleting it at the boundary could
+// recreate an empty bucket and admit requests beyond that hour’s cap.
 export const windowExpiry = (now: number): number => resetAt(now) + HOUR_MS;
 
 /** UTC day for the daily rejection count. */
@@ -68,3 +55,13 @@ export const keys = {
   notified: (userId: string, now: number, generation: number) =>
     `rl:notified:${userId}:${windowStart(now)}:${generation}`,
 };
+
+export const userFields = {
+  version: 'v',
+  generation: 'g',
+  lastRequestAt: 'lastRequestAt',
+  lastManualResetAt: 'lastManualResetAt',
+} as const;
+
+export const statField = (denied: boolean, minute: number): string =>
+  `${denied ? 'd' : 'a'}:${minute}`;

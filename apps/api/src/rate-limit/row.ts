@@ -1,5 +1,5 @@
 import type { Status, UserRow } from '@app/contracts';
-import { resetAt, windowStart } from './keys.js';
+import { resetAt, userFields, windowStart } from './keys.js';
 
 /** The base limit of a user without a custom one. Not configurable. */
 export const DEFAULT_LIMIT = 100;
@@ -19,14 +19,14 @@ export type RowReplies = [
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
-/**
- * Turns one row read and the request's time into the row the dashboard
- * shows. Admission, admin actions and the snapshot all use this function,
- * so there is no second place that computes remaining, status or last
- * reset, and the table cannot disagree with the limiter.
- *
- * Pure: no Redis, no Nest, no clock.
- */
+function statusFor(used: number, total: number): Status {
+  if (used >= total) return 'Exceeded';
+  // Integer arithmetic preserves the threshold for non-round limits.
+  if (used * 10 >= total * 9) return 'Warning';
+  return 'OK';
+}
+
+// Shared row calculation keeps remaining quota, status and reset time consistent.
 export function buildRow(
   userId: string,
   [used, limitReply, extraReply, suspendReply, user]: RowReplies,
@@ -35,11 +35,6 @@ export function buildRow(
   const limit = Number(limitReply ?? DEFAULT_LIMIT);
   const extra = Number(extraReply ?? 0);
   const total = limit + extra;
-
-  // Integer arithmetic: `used / total >= 0.9` would depend on rounding.
-  let status: Status = 'OK';
-  if (used >= total) status = 'Exceeded';
-  else if (used * 10 >= total * 9) status = 'Warning';
 
   // The stored end time decides, not the key's existence: Redis removes an
   // expired key a moment late.
@@ -53,14 +48,19 @@ export function buildRow(
     total,
     // A lowered limit keeps the real usage; only the display is clamped.
     remaining: Math.max(0, total - used),
-    status,
+    status: statusFor(used, total),
     resetAt: iso(resetAt(now)),
-    lastRequestAt: user.lastRequestAt ? iso(Number(user.lastRequestAt)) : null,
+    lastRequestAt: user[userFields.lastRequestAt]
+      ? iso(Number(user[userFields.lastRequestAt]))
+      : null,
     // A new hour is a reset too, so this is never older than the window.
     lastResetAt: iso(
-      Math.max(windowStart(now), Number(user.lastManualResetAt ?? 0)),
+      Math.max(
+        windowStart(now),
+        Number(user[userFields.lastManualResetAt] ?? 0),
+      ),
     ),
     suspendedUntil: suspendedUntil > now ? iso(suspendedUntil) : null,
-    version: Number(user.v ?? 0),
+    version: Number(user[userFields.version] ?? 0),
   };
 }

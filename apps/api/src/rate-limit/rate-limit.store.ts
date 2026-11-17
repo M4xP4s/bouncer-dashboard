@@ -1,25 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import type {
-  RequestOutcome,
-  RequestRecord,
-  UserRow,
-} from '@app/contracts';
+import type { RequestOutcome, RequestRecord, UserRow } from '@app/contracts';
 import { REDIS, type RedisClient } from '../redis/redis.module.js';
 import {
   counterExpiry,
   keys,
   minuteInWindow,
+  statField,
+  userFields,
   windowExpiry,
 } from './keys.js';
 import { buildRow, type RowReplies } from './row.js';
 
-/**
- * Redis did not answer, or answered with an error. The only error this
- * store converts: the caller maps it to 503. Anything else that goes wrong
- * here is a defect of ours and must surface as one, so nothing else is
- * caught.
- */
+// Only Redis failures become 503; programming errors remain defects.
 export class StoreUnavailable extends Error {
   constructor(cause: unknown) {
     super('The rate limit store is unavailable.', { cause });
@@ -37,26 +30,12 @@ export interface Admission {
   generation: number;
 }
 
-/**
- * All rate limit state in Redis. The
- * only file in the feature that calls the Redis client.
- *
- * Quota decisions and admin changes share Redis's transaction ordering.
- * History and notifications follow the decision in a best-effort transaction.
- */
+// Quota decisions are atomic; history and notifications follow best-effort.
 @Injectable()
 export class RateLimitStore {
   constructor(@Inject(REDIS) private readonly redis: RedisClient) {}
 
-  /**
-   * Counts the request and decides it, in one `MULTI`/`EXEC` transaction.
-   *
-   * The request is added first and everything the decision needs is read
-   * after it, inside the same transaction. Redis runs a transaction without
-   * interleaving another client's commands, so two concurrent requests each
-   * see a different count and cannot both take the last slot. Reading the
-   * count first and writing afterwards would allow exactly that.
-   */
+  // Write then read inside MULTI/EXEC: concurrent requests cannot share a slot.
   async admit(userId: string, now: number): Promise<Admission> {
     const requestId = randomUUID();
     const window = keys.window(userId, now);
@@ -68,8 +47,8 @@ export class RateLimitStore {
         // Inside the transaction: set separately, a crash between the two
         // commands would leave a key that never expires.
         .pExpireAt(window, windowExpiry(now))
-        .hIncrBy(user, 'v', 1)
-        .hSet(user, 'lastRequestAt', `${now}`);
+        .hIncrBy(user, userFields.version, 1)
+        .hSet(user, userFields.lastRequestAt, `${now}`);
       this.appendRowRead(multi, userId, now);
     });
     // The last five replies belong to appendRowRead; Redis's dynamic queue
@@ -91,7 +70,12 @@ export class RateLimitStore {
       outcome === 'denied'
         ? buildRow(userId, [count - 1, limit, extra, suspend, hash], now)
         : counted;
-    return { outcome, row, requestId, generation: Number(hash.g ?? 0) };
+    return {
+      outcome,
+      row,
+      requestId,
+      generation: Number(hash[userFields.generation] ?? 0),
+    };
   }
 
   /**
@@ -121,7 +105,7 @@ export class RateLimitStore {
         .expire(keys.history(userId), 86_400)
         .hIncrBy(
           keys.stat(userId, now),
-          `${denied ? 'd' : 'a'}:${minuteInWindow(now)}`,
+          statField(denied, minuteInWindow(now)),
           1,
         )
         .pExpireAt(keys.stat(userId, now), counterExpiry(now));
