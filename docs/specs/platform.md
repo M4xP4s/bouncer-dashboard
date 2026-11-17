@@ -3,9 +3,10 @@
 ## Scope
 
 The workspace, start-up configuration, who a caller is, the Redis connection,
-the health route and the error response. Items are cited as
-[the requirements][req] name them: *Backend N*, *Core feature N*,
-*Submission*, *Expectation: quality*.
+the health route, the error response and the two run modes: on the host for
+development, and in containers. Items are cited as [the requirements][req]
+name them: *Backend N*, *Core feature N*, *Submission*, *Expectation:
+quality*.
 
 ## Behavior
 
@@ -53,6 +54,16 @@ the health route and the error response. Items are cited as
    "Redis is not reachable." within the bound of rule 7, so a readiness
    check covers the store that every request needs. (Expectation:
    reliability)
+9. **Addition: one origin.** The API also serves the built dashboard, so the
+   page, the API and the socket share one origin and the API sends no CORS
+   headers. A path under `/api` or `/socket.io` is never the page: an unknown
+   `/api` path is a 404 `ApiError`. (Expectation: security)
+10. **Addition: one image, and Compose on loopback.** The image holds the API
+    and the built dashboard and runs as the unprivileged `node` user. Compose
+    starts Redis and the application, publishes both on `127.0.0.1` only,
+    because Redis has no password and the demo credentials are public, and
+    counts the application healthy once rule 8 answers 200. (Expectation:
+    security; Expectation: reliability)
 
 The start-up of rules 2 and 5, and the outage of rule 7, in one picture:
 
@@ -124,6 +135,15 @@ like a hung one, so no blocking command may use this client; and a write that
 was cut off may or may not have been applied. Cases: the Redis module spec;
 the outage cases.
 
+**The API serves the dashboard.** A page on another origin needs CORS on the
+API and on the socket handshake, and a second server to run. Served by the
+API, the page uses relative URLs in every mode: in development Vite forwards
+`/api` and `/socket.io` to the API. Alternatives: a static host or a reverse
+proxy in front of both, one more service to configure; CORS, which widens
+what other origins may call. Cost: the API process also serves static files,
+and a changed page needs a new image. Cases: the one-origin cases; the
+Compose milestone.
+
 ## Test plan
 
 Unit, no Redis (`npm test`):
@@ -157,6 +177,10 @@ Real store (run as in [rate limiting](rate-limiting.md#test-plan)):
   behind a stopped relay it is the 503 of rule 8; behind a frozen one, the
   same 503 within 5 s and later ones within 0.5 s; 200 again once the relay
   passes traffic.
+- `apps/api/test/one-origin.e2e-spec.ts` (after `npm run build`, which
+  produces the page): `/` is the dashboard's HTML; an unknown `/api` path is
+  a JSON 404 `ApiError`, not the page; a Socket.IO client connects over
+  polling under `/socket.io`.
 
 Rule 4: the handshake cases are in the test plan of
 [live updates](live-updates.md#test-plan); a missing and a user token on
@@ -184,13 +208,33 @@ first `curl` shows a 404 `ApiError` saying `Cannot GET /api/nothing`; the
 second prints `{"status":"ok"}`, and after `docker compose stop redis` a 503
 `ApiError` saying `Redis is not reachable.`
 
+In containers, with ports 3000 and 6379 free:
+
+```sh
+docker compose up --build --wait
+curl -s 127.0.0.1:3000/ | grep -o '<title>.*</title>'
+curl -s 127.0.0.1:3000/api/health
+curl -si -H 'Authorization: Bearer demo-token-01' 127.0.0.1:3000/api/sample | grep -i '^x-count'
+docker compose exec app whoami
+npm run demo:traffic           # leave running; Ctrl+C stops it
+docker compose down -v
+```
+
+`up` returns once both services are healthy. The page prints
+`<title>Rate limit dashboard</title>`, health `{"status":"ok"}`, the sample
+`x-count: 99` on an empty store, and `whoami` prints `node`. Once the traffic
+prints its trickle line, `http://127.0.0.1:3000` signed in with
+`demo-admin-token` shows `user-02` to `user-04` as OK, `user-05` as Warning
+and `user-06` as Exceeded; the trickle then adds one request every 3 s.
+
 ## Limits
 
 Demo authentication is not production authentication: the tokens are static
 and public, with no expiry, revocation, per-person admin identity or
 failed-attempt limit, and user tokens are not compared in constant time. There
 is no TLS and the Redis in Compose has no password. Replication and failover
-are not covered, and the connection log has no test.
+are not covered, and the connection log has no test. Compose runs one API
+container on one host: a demo, not a deployment.
 
 [req]: ../REQUIREMENTS.md
 [env]: ../../.env.example

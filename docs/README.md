@@ -112,7 +112,7 @@ Specifications are listed here as they are introduced.
 
 | Specification | Covers |
 | --- | --- |
-| [Platform](specs/platform.md) | The workspace, start-up configuration, who a caller is, the Redis connection, the health route and the error response. |
+| [Platform](specs/platform.md) | The workspace, start-up configuration, who a caller is, the Redis connection, the health route, the error response and the run modes. |
 | [Rate limiting](specs/rate-limiting.md) | UTC windows, atomic admission, quota headers and errors. |
 | [Live updates](specs/live-updates.md) | Authenticated socket events, versioning, alert suppression and delivery across API processes. |
 | [Admin API](specs/admin-api.md) | Authenticated actions, snapshots, activity history and analytics. |
