@@ -3,9 +3,20 @@ import {
   BadRequestException,
   HttpException,
   type HttpServer,
+  Logger,
 } from '@nestjs/common';
 import { mock, mockDeep } from 'vitest-mock-extended';
 import { ApiErrorFilter } from './api-error.filter.js';
+
+/** A filter on a mocked HTTP adapter, and the response object it replies on. */
+function setUp({ headersSent = false } = {}) {
+  const adapter = mock<HttpServer>();
+  const host = mockDeep<ArgumentsHost>();
+  const response = {};
+  host.getArgByIndex.mockReturnValue(response);
+  adapter.isHeadersSent.mockReturnValue(headersSent);
+  return { filter: new ApiErrorFilter(adapter), adapter, host, response };
+}
 
 describe('ApiErrorFilter', () => {
   it.each([
@@ -36,13 +47,9 @@ describe('ApiErrorFilter', () => {
   ])(
     'normalizes %s without losing HTTP classification or exposing hidden middleware details',
     (error, body) => {
-      const adapter = mock<HttpServer>();
-      const host = mockDeep<ArgumentsHost>();
-      const response = {};
-      host.getArgByIndex.mockReturnValue(response);
-      adapter.isHeadersSent.mockReturnValue(false);
+      const { filter, adapter, host, response } = setUp();
 
-      new ApiErrorFilter(adapter).catch(error, host);
+      filter.catch(error, host);
 
       expect(adapter.reply).toHaveBeenCalledExactlyOnceWith(
         response,
@@ -51,4 +58,55 @@ describe('ApiErrorFilter', () => {
       );
     },
   );
+
+  it('answers an unexpected error with a 500 and logs the cause instead of sending it', () => {
+    const { filter, adapter, host, response } = setUp();
+    const log = vi
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => {});
+    const defect = new Error('private detail');
+
+    filter.catch(defect, host);
+
+    expect(adapter.reply).toHaveBeenCalledExactlyOnceWith(
+      response,
+      {
+        statusCode: 500,
+        error: 'Internal Server Error',
+        message: 'Internal server error',
+      },
+      500,
+    );
+    expect(log).toHaveBeenCalledExactlyOnceWith('Unexpected API error', defect);
+    log.mockRestore();
+  });
+
+  it('keeps the extra fields of an exception, such as a retry time', () => {
+    const { filter, adapter, host, response } = setUp();
+    const retryAt = '2026-01-01T00:00:00.000Z';
+
+    filter.catch(
+      new HttpException({ message: 'Slow down.', retryAt }, 429),
+      host,
+    );
+
+    expect(adapter.reply).toHaveBeenCalledExactlyOnceWith(
+      response,
+      {
+        statusCode: 429,
+        error: 'Too Many Requests',
+        message: 'Slow down.',
+        retryAt,
+      },
+      429,
+    );
+  });
+
+  it('does not reply again once the headers are sent', () => {
+    const { filter, adapter, host } = setUp({ headersSent: true });
+
+    filter.catch(new HttpException('Late.', 500), host);
+
+    expect(adapter.reply).not.toHaveBeenCalled();
+  });
 });
