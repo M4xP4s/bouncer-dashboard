@@ -27,7 +27,8 @@ designing or changing a capability, and cite their IDs in reviews.
 - Base requirements are implemented before improvements.
 - Every commit builds, lints and passes the tests that exist at that commit.
 - Open a pull request and wait for the owner's review. Merge only when the
-  owner says so, with a merge commit and no squash.
+  owner says so, as a squash merge; rebase the pull requests stacked on it
+  afterwards.
 
 ## Rules
 
