@@ -288,9 +288,10 @@ A reset whose response was lost looks safe to send again, and a flawed
 implementation sends it. If requests were admitted in between, the second
 reset clears usage the first one never saw.
 
-**Guard:** the dashboard never repeats an admin action on its own. After an
-uncertain outcome it reads the state again and shows the error until that
-read succeeds; the admin decides what to do next.
+**Guard:** the dashboard never repeats an admin action on its own. After a
+failed action it reads the state again and keeps the error on screen until
+that form's next action or until the panel closes; the admin decides what to
+do next.
 **Check:** browser environment: an action that fails is sent once, and the
 state shown afterwards comes from a fresh read.
 
@@ -319,10 +320,11 @@ sequenceDiagram
 **Guard:** an event carries the user's full row and a version and is applied
 directly. No event causes a fetch. Snapshots are a repair path: one in
 flight and at most one queued behind it. Asking for another does not cancel
-the one that is running.
+the one that is running; only a change of page or filter does, because its
+response is no longer wanted (P22).
 **Check:** browser environment: events are applied without any request;
 requests for a snapshot during a pending one are merged into a single
-follow-up.
+follow-up and leave the pending one running.
 
 ### P19. An older snapshot overwriting a newer event
 
@@ -460,3 +462,5 @@ hour on almost every run and proves nothing about the boundary.
 supply the time.
 **Check:** unit test and real store: the hour boundary one millisecond
 before, at and one millisecond after, with the time supplied by the test.
+Unit test: a clock that moves on after the decision does not change the time
+at which its outcome is recorded.

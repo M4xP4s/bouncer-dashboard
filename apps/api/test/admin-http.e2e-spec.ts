@@ -15,8 +15,10 @@ const INVALID_BODIES = [
   ['put', '/users/user-01/limit', { limit: 0 }],
   ['put', '/users/user-01/limit', { limit: '10' }],
   ['post', '/users/user-01/extra', { amount: '5' }],
+  ['post', '/users/user-01/extra', { amount: 1.5 }],
   ['post', '/users/user-01/extra', { amount: 5, other: true }],
   ['post', '/users/user-01/suspension', { minutes: '5' }],
+  ['post', '/users/user-01/suspension', { minutes: 1441 }],
 ] as const;
 
 const ADMIN_ROUTES = [

@@ -107,7 +107,9 @@ Mocked store (`vitest-mock-extended`), no Redis, in `apps/api/src/`:
 - `rate-limit/rate-limit.store.spec.ts`: cap, bypass, command order, outage;
   admission and bookkeeping preserve Redis error replies unwrapped.
 - `rate-limit/rate-limit.interceptor.spec.ts`,
-  `sample/sample.controller.spec.ts`: headers, 429, 503, events; bookkeeping
+  `sample/sample.controller.spec.ts`: headers, 429, 503 with its cause
+  logged, events; the outcome is recorded at the time of the decision
+  although the clock has moved on ([P25]); bookkeeping
   defects propagate for both admitted and denied requests without running the handler.
 - `rate-limit/row.spec.ts`: status around the 90% line, limits 100 and 11.
 - `rate-limit/keys.spec.ts`: a millisecond around the boundary, also for the
@@ -118,8 +120,8 @@ command, and the Redis server of its own that the suite needs, are in the
 [README](../../README.md#verification); the suite empties the database it uses):
 - `admission.e2e-spec.ts`: `x-count` 99 down to 0, then the 429; the quota
   changes exactly at the UTC hour ([P25]); one user's exhaustion leaves
-  another's quota; a failing handler still counts; a 401 and a spoofed ID
-  count nothing.
+  another's quota; a failing handler still counts; a key of the wrong type
+  answers 500, not 503 ([P8]); a 401 and a spoofed ID count nothing.
 - `concurrency.e2e-spec.ts`: 200 concurrent requests admit exactly 100 with
   distinct `x-count` values ([P24]); a reset or a grant between two batches
   keeps every later admission; during 1000 rejections, 20 requests of

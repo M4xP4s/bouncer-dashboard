@@ -144,14 +144,15 @@ Real store, in `apps/api/test/` (run as in
 - `admin-behavior.e2e-spec.ts`: reset clears usage and grant and keeps the
   limit; a lower limit keeps usage; a grant adds its slots and ends with the
   hour; a suspension bypasses, is counted, and ends on expiry or on request.
-- `admin-http.e2e-spec.ts`: bad input and unknown users change nothing; an
+- `admin-http.e2e-spec.ts`: bad input (wrong type, fraction, out of range,
+  extra field) and unknown users change nothing; an
   unknown user with an invalid body or history range is 404 and writes
   nothing; every route and the socket refuse a missing and a user token; an
   ID with uppercase, `_` and `-` survives every route ([P11]).
 - `read-model.e2e-spec.ts`: snapshot, detail, `x-count` and analytics agree;
   the top users are ranked by usage, equal usage by ID; histories include
-  the previous hour and zero-filled buckets; recent requests stay capped at
-  100.
+  the previous hour and zero-filled buckets; the stored list of recent
+  requests stays capped at 100.
 - `registry.e2e-spec.ts`: first, middle, last and past-the-end pages of
   10000 users; status, last activity and search count across all users;
   the page asked for leaves analytics unchanged; a read in batches ends at

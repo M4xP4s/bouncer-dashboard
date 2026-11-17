@@ -181,6 +181,8 @@ describe('dashboard read models', () => {
       await api.sample().expect(429);
     const recent = (await api.detail()).recentRequests;
 
+    // The stored list itself: a read of at most 100 cannot show the trim.
+    expect(await api.redis.lLen('rl:hist:user-01')).toBe(100);
     expect(recent).toHaveLength(100);
     expect(new Set(recent.map((entry) => entry.id)).size).toBe(100);
     const denied = recent.filter((entry) => entry.outcome === 'denied');

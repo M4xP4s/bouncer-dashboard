@@ -140,6 +140,8 @@ it('serializes snapshots and coalesces all requests during a pending snapshot on
   });
   await connect();
   expect(client.users).toHaveBeenCalledTimes(1);
+  // Asking again must not cancel the read that is running.
+  expect(client.users.mock.calls[0][1]?.aborted).toBe(false);
 
   await act(async () => pending.resolve(pageOf(users)));
   expect(client.users).toHaveBeenCalledTimes(2);
@@ -338,6 +340,7 @@ it('removes exactly its own socket callbacks and timers when unmounted', async (
 
   unmount();
 
+  expect(vi.getTimerCount()).toBe(0);
   expect(vi.mocked(socket.off).mock.calls).toEqual(added);
   expect(socket.disconnect).toHaveBeenCalledOnce();
   await advanceTime(30_000);

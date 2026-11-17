@@ -67,6 +67,16 @@ describe('admission and identity', () => {
     expect(await api.redis.zCard(windowKey('user-01'))).toBe(100);
   });
 
+  it('answers 500, not a retryable 503, when a key holds the wrong type', async () => {
+    const api = application();
+    await api.redis.set(windowKey('user-01'), 'not a sorted set');
+
+    const response = await api.sample().expect(500);
+
+    expect(response.headers['x-count']).toBeUndefined();
+    expect(response.headers['retry-after']).toBeUndefined();
+  });
+
   it('counts nothing for a refused credential and ignores a sent user ID', async () => {
     const api = application();
 
