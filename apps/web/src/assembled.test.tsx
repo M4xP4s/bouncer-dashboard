@@ -2,7 +2,13 @@ import { MantineProvider } from '@mantine/core';
 import { Notifications, notifications } from '@mantine/notifications';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { UserDetail, UserRow } from '@app/contracts';
+import type {
+  Analytics,
+  RateUpdateEvent,
+  RequestRecord,
+  UserDetail,
+  UserRow,
+} from '@app/contracts';
 import { HttpError } from './api/http.ts';
 import {
   analytics,
@@ -14,26 +20,32 @@ import {
 import { deferred, mockClient, mockSocket } from './lib/test-helpers.ts';
 import App from './App.tsx';
 
-const transport = vi.hoisted(() => ({
-  client: null as unknown,
-  socket: null as unknown,
-}));
-vi.mock('./api/index.ts', () => ({
-  createClient: () => transport.client,
-  openSocket: () => transport.socket,
-  clock: () => Date.now(),
-}));
-const now = Date.parse(NOW);
 let client: ReturnType<typeof mockClient>;
 let socket: ReturnType<typeof mockSocket>;
+// The mock reads both variables on each call, so every test gets a fresh pair.
+vi.mock('./api/index.ts', () => ({
+  createClient: () => client,
+  openSocket: () => socket,
+  clock: () => Date.now(),
+}));
+
+// The dashboard reconciles every ten seconds while the page is visible.
+const TICK_MS = 10_000;
+// Longer than the 200 ms the drawer takes to open or close.
+const DRAWER_SETTLED_MS = 250;
+const user01AfterReset: UserRow = {
+  ...users[0],
+  used: 0,
+  remaining: 100,
+  version: 13,
+};
+
 beforeEach(() => {
-  vi.useFakeTimers({ now });
+  vi.useFakeTimers({ now: Date.parse(NOW) });
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   sessionStorage.setItem('adminToken', 'demo');
   client = mockClient();
   socket = mockSocket();
-  transport.client = client;
-  transport.socket = socket;
   client.users.mockResolvedValue(users);
   client.analytics.mockResolvedValue(analytics);
   client.detail.mockImplementation(async (id) => ({
@@ -48,46 +60,81 @@ afterEach(() => {
   vi.restoreAllMocks();
   sessionStorage.clear();
 });
-async function open() {
+
+const connectSocket = () =>
+  act(async () => socket.listeners.connect.forEach((listener) => listener()));
+
+const receiveUpdate = (event: RateUpdateEvent) =>
+  act(() =>
+    socket.listeners['rate:update'].forEach((listener) => listener(event)),
+  );
+
+const advance = (milliseconds: number) =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(milliseconds);
+  });
+
+async function openDashboard() {
   render(
     <MantineProvider>
       <Notifications />
       <App />
     </MantineProvider>,
   );
-  await act(async () => socket.listeners.connect.forEach((fn) => fn()));
+  await connectSocket();
 }
 
+const press = (button: string) =>
+  fireEvent.click(screen.getByRole('button', { name: button }));
+
+async function openUser(userId: string) {
+  press(userId);
+  await advance(DRAWER_SETTLED_MS);
+}
+
+async function closeUserDetails() {
+  press('Close user details');
+  await advance(DRAWER_SETTLED_MS);
+}
+
+/** Starts a reset of user-01, then opens user-02 before the reply arrives. */
+async function resetUser01ThenOpenUser02() {
+  await openUser('user-01');
+  press('Reset usage');
+  await closeUserDetails();
+  await openUser('user-02');
+}
+
+const tableRow = (userId: string) =>
+  within(screen.getByRole('row', { name: new RegExp(userId) }));
+
 it('keeps the table live after closing the labelled drawer and restores focus', async () => {
-  await open();
-  const button = screen.getByRole('button', { name: 'user-01' });
-  button.focus();
-  fireEvent.click(button);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(250);
-  });
-  expect(
-    screen.getByRole('button', { name: 'Close user details' }),
-  ).toBeTruthy();
+  await openDashboard();
+  const userButton = screen.getByRole('button', { name: 'user-01' });
+  userButton.focus();
+  fireEvent.click(userButton);
+  await advance(DRAWER_SETTLED_MS);
   const close = screen.getByRole('button', { name: 'Close user details' });
   close.focus();
   expect(document.activeElement).toBe(close);
+
   fireEvent.keyDown(close, { key: 'Escape' });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(250);
-  });
-  expect(document.activeElement).toBe(button);
-  act(() => socket.listeners['rate:update'].forEach((fn) => fn(requestUpdate)));
-  expect(
-    within(screen.getByRole('row', { name: /user-01/ })).getByText('87 / 100'),
-  ).toBeTruthy();
+  await advance(DRAWER_SETTLED_MS);
+  expect(document.activeElement).toBe(userButton);
+
+  receiveUpdate(requestUpdate);
+  expect(tableRow('user-01').getByText('87 / 100')).toBeTruthy();
 });
 
 it('announces a current exceeded event', async () => {
-  await open();
+  await openDashboard();
+
   act(() =>
-    socket.listeners['rate:limit_exceeded'].forEach((fn) => fn(limitExceeded)),
+    socket.listeners['rate:limit_exceeded'].forEach((listener) =>
+      listener(limitExceeded),
+    ),
   );
+
   expect(screen.getByText('Limit exceeded: user-05')).toBeTruthy();
   expect(screen.getByText('Retry at 11:00:00 UTC')).toBeTruthy();
 });
@@ -97,142 +144,110 @@ it('merges an event received during a delayed detail and removes it at the idle 
   client.detail
     .mockReturnValueOnce(detail.promise)
     .mockResolvedValue({ row: users[0], recentRequests: [] });
-  await open();
-  fireEvent.click(screen.getByRole('button', { name: 'user-01' }));
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(250);
-  });
-  const record = {
-    ...requestUpdate.request!,
-    at: new Date(now - 86400000 + 10000).toISOString(),
+  // Turns 24 hours old ten seconds after NOW, at the next tick.
+  const agingRequest: RequestRecord = {
+    id: 'req-01-013',
+    at: '2026-11-15T10:42:10.000Z',
+    outcome: 'allowed',
+    remaining: 87,
   };
-  const event = { ...requestUpdate, request: record };
-  act(() => socket.listeners['rate:update'].forEach((fn) => fn(event)));
-  const region = screen.getByRole('region', { name: 'Recent requests' });
-  expect(within(region).getByText('allowed')).toBeTruthy();
+  await openDashboard();
+  await openUser('user-01');
+
+  receiveUpdate({ ...requestUpdate, request: agingRequest });
+  const requests = within(
+    screen.getByRole('region', { name: 'Recent requests' }),
+  );
+  expect(requests.getByText('allowed')).toBeTruthy();
+
   await act(async () => detail.resolve({ row: users[0], recentRequests: [] }));
-  expect(within(region).getByText('allowed')).toBeTruthy();
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(10000);
-  });
-  expect(within(region).queryByText('allowed')).toBeNull();
+  expect(requests.getByText('allowed')).toBeTruthy();
+
+  await advance(TICK_MS);
+  expect(requests.queryByText('allowed')).toBeNull();
 });
 
 it('applies an action to the original held row after opening another user', async () => {
-  const response = deferred<UserRow>();
-  client.reset.mockReturnValue(response.promise);
-  await open();
-  fireEvent.click(screen.getByRole('button', { name: 'user-01' }));
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(250);
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Reset usage' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Close user details' }));
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(250);
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'user-02' }));
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(250);
-  });
-  await act(async () =>
-    response.resolve({
-      ...users[0],
-      used: 0,
-      remaining: 100,
-      version: users[0].version + 1,
-    }),
-  );
-  expect(
-    within(screen.getByRole('row', { name: /user-01/ })).getByText('100 / 100'),
-  ).toBeTruthy();
-  expect(
-    within(screen.getByRole('row', { name: /user-02/ })).getByText('50 / 100'),
-  ).toBeTruthy();
+  const reset = deferred<UserRow>();
+  client.reset.mockReturnValue(reset.promise);
+  await openDashboard();
+  await resetUser01ThenOpenUser02();
+
+  await act(async () => reset.resolve(user01AfterReset));
+
+  expect(tableRow('user-01').getByText('100 / 100')).toBeTruthy();
+  expect(tableRow('user-02').getByText('50 / 100')).toBeTruthy();
   expect(screen.getByText(/Used 50; limit 100/)).toBeTruthy();
 });
 
 it('reconciles a failed action after its form was closed without leaking the error into another user', async () => {
-  const response = deferred<UserRow>();
-  client.reset.mockReturnValue(response.promise);
-  await open();
-  fireEvent.click(screen.getByRole('button', { name: 'user-01' }));
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(250);
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Reset usage' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Close user details' }));
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(250);
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'user-02' }));
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(250);
-  });
-  const snapshotsBefore = client.users.mock.calls.length;
-  // A failed reply is uncertain: the write may have landed, so the snapshot repairs its named row.
+  const reset = deferred<UserRow>();
+  client.reset.mockReturnValue(reset.promise);
+  await openDashboard();
+  await resetUser01ThenOpenUser02();
+  // A failed reply is uncertain: the write may have landed, so the next
+  // snapshot carries the reset row.
+  client.users.mockClear();
   client.users.mockResolvedValue(
-    users.map((row) =>
-      row.userId === 'user-01'
-        ? { ...row, used: 0, remaining: 100, version: row.version + 1 }
-        : row,
-    ),
+    users.map((row) => (row.userId === 'user-01' ? user01AfterReset : row)),
   );
+
   await act(async () =>
-    response.reject(new HttpError('Reset outcome uncertain', 503)),
+    reset.reject(new HttpError('Reset outcome uncertain', 503)),
   );
+
   expect(client.reset).toHaveBeenCalledTimes(1);
-  expect(client.users).toHaveBeenCalledTimes(snapshotsBefore + 1);
-  expect(
-    within(screen.getByRole('row', { name: /user-01/ })).getByText('100 / 100'),
-  ).toBeTruthy();
+  expect(client.users).toHaveBeenCalledTimes(1);
+  expect(tableRow('user-01').getByText('100 / 100')).toBeTruthy();
   expect(screen.getByText(/Used 50; limit 100/)).toBeTruthy();
   expect(screen.queryByText('Reset outcome uncertain')).toBeNull();
 });
 
 it('keeps the table working when analytics fails', async () => {
   client.analytics.mockRejectedValue(new Error('analytics unavailable'));
-  await open();
+  await openDashboard();
   expect(screen.getByText(/analytics unavailable/)).toBeTruthy();
-  act(() => socket.listeners['rate:update'].forEach((fn) => fn(requestUpdate)));
-  expect(
-    within(screen.getByRole('row', { name: /user-01/ })).getByText('87 / 100'),
-  ).toBeTruthy();
+
+  receiveUpdate(requestUpdate);
+  expect(tableRow('user-01').getByText('87 / 100')).toBeTruthy();
 });
 
 it('coalesces the connect refresh behind the mounted analytics load without fetching for events', async () => {
-  const first = deferred<typeof analytics>();
-  client.analytics.mockReturnValueOnce(first.promise);
-  await open();
+  const mountedLoad = deferred<Analytics>();
+  client.analytics.mockReturnValueOnce(mountedLoad.promise);
+  await openDashboard();
   expect(client.analytics).toHaveBeenCalledTimes(1);
-  expect(client.analytics.mock.calls[0][0]?.aborted).toBe(false);
-  act(() => socket.listeners['rate:update'].forEach((fn) => fn(requestUpdate)));
+  const mountedLoadSignal = client.analytics.mock.calls[0][0];
+  expect(mountedLoadSignal?.aborted).toBe(false);
+
+  receiveUpdate(requestUpdate);
   expect(client.analytics).toHaveBeenCalledTimes(1);
-  await act(async () => first.resolve(analytics));
+
+  await act(async () => mountedLoad.resolve(analytics));
   expect(client.analytics).toHaveBeenCalledTimes(2);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(9_999);
-  });
+
+  await advance(TICK_MS - 1);
   expect(client.analytics).toHaveBeenCalledTimes(2);
   expect(screen.getByText('64%')).toBeTruthy();
 });
 
 it('announces connection changes without announcing ordinary event or snapshot timestamps', async () => {
-  await open();
+  await openDashboard();
   const status = screen.getByRole('status');
-  const connected = status.textContent;
-  act(() => socket.listeners['rate:update'].forEach((fn) => fn(requestUpdate)));
-  expect(status.textContent).toBe(connected);
+
+  receiveUpdate(requestUpdate);
+  expect(status.textContent).toBe('Live');
   expect(
     screen.getByText('Last update 10:42:01 UTC').closest('[role="status"]'),
   ).toBeNull();
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(10_000);
-  });
-  expect(status.textContent).toBe(connected);
+
+  await advance(TICK_MS);
+  expect(status.textContent).toBe('Live');
   expect(screen.getByText('Last update 10:42:10 UTC')).toBeTruthy();
-  act(() => socket.listeners.disconnect.forEach((fn) => fn()));
+
+  act(() => socket.listeners.disconnect.forEach((listener) => listener()));
   expect(status.textContent).toBe('Disconnected, reconnecting…');
-  await act(async () => socket.listeners.connect.forEach((fn) => fn()));
-  expect(status.textContent).toBe(connected);
+
+  await connectSocket();
+  expect(status.textContent).toBe('Live');
 });

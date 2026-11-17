@@ -1,7 +1,5 @@
-// Guards what the admin controls send to the API: Suspend and Add extra must
-// post a numeric `minutes` / `amount` (the API rejects any other body with
-// 400), and Resume throttling must call the unsuspend endpoint and show the
-// returned row. The input-validation cases live in `features/dashboard.test.tsx`.
+// What the admin controls send: the API answers a non-numeric body with 400.
+// The input-validation cases are in `features/dashboard.test.tsx`.
 import { MantineProvider } from '@mantine/core';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
@@ -18,12 +16,20 @@ function renderForms() {
     client,
     onRefused: vi.fn(),
   };
-  const live = { applyRow: vi.fn(), refresh: vi.fn() } as unknown as LiveUsers;
-  render(
-    <MantineProvider>
-      <AdminForms userId="user-01" session={session} live={live} />
-    </MantineProvider>,
-  );
+  const live: LiveUsers = {
+    rows: new Map(),
+    liveRecords: new Map(),
+    connection: 'live',
+    lastUpdateAt: null,
+    snapshot: { status: 'loaded', error: null },
+    now: 0,
+    tick: 0,
+    applyRow: vi.fn(),
+    refresh: vi.fn(),
+  };
+  render(<AdminForms userId="user-01" session={session} live={live} />, {
+    wrapper: MantineProvider,
+  });
   return { client, live };
 }
 

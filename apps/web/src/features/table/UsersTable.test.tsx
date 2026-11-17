@@ -1,7 +1,5 @@
-// Guards the search box and the Status and Last active selects: each control
-// must narrow the rows that are actually on screen. A select wired to the
-// wrong state, a wrong option value, or filter arguments passed in the wrong
-// order would leave the pure `filterUsers` tests green and the table wrong.
+// The pure `filterUsers` tests stay green when a control is wired to the wrong
+// state or option value; these check the rows that are actually on screen.
 import { MantineProvider } from '@mantine/core';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';

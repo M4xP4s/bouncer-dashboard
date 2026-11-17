@@ -1,6 +1,6 @@
 import { MantineProvider } from '@mantine/core';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { requestUpdate } from './fixtures/index.ts';
 import App from './App.tsx';
 
@@ -44,6 +44,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   io.mockReturnValue(socket);
 });
+afterEach(() => vi.unstubAllGlobals());
 
 const renderApp = () =>
   render(
@@ -171,28 +172,22 @@ it('still opens when the browser blocks storage; the token is then kept in memor
     setItem: blocked,
     removeItem: blocked,
   });
-  try {
-    renderApp();
-    signIn();
 
-    expect(screen.getByRole('status')).toBeTruthy();
+  renderApp();
+  signIn();
 
-    socket.active = false;
-    socket.receive('connect_error', new Error('Unauthorized'));
+  expect(screen.getByRole('status')).toBeTruthy();
 
-    expect(screen.getByText('The admin token was not accepted.')).toBeTruthy();
-  } finally {
-    vi.unstubAllGlobals();
-  }
+  socket.active = false;
+  socket.receive('connect_error', new Error('Unauthorized'));
+
+  expect(screen.getByText('The admin token was not accepted.')).toBeTruthy();
 });
 
 it('removes only its own listeners and disconnects when it goes away', () => {
   const { unmount } = renderApp();
   signIn();
-  const added = socket.on.mock.calls.map(([event, listener]) => [
-    event,
-    listener,
-  ]);
+  const added = [...socket.on.mock.calls];
 
   unmount();
 

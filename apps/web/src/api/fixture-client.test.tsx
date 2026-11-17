@@ -15,6 +15,10 @@ vi.mock('./index.ts', async () => {
   };
 });
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+// The interval at which the dashboard reconciles while the page is visible.
+const TICK_MS = 10_000;
+
 beforeEach(() => {
   vi.useFakeTimers({ now: new Date('2036-01-01') });
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
@@ -24,113 +28,108 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function fixtureClient(signal = new AbortController().signal) {
+  return createClient({ token: 'demo', signal, onRefused: vi.fn() });
+}
+
+/** The hooks of a dashboard that has user-09's detail panel open. */
+function usePanels(session: Session) {
+  const live = useLiveUsers(session);
+  const detail = useRequest(
+    'detail:user-09',
+    (signal) => session.client.detail('user-09', signal),
+    live.tick,
+  );
+  const analytics = useRequest(
+    'analytics',
+    (signal) => session.client.analytics(signal),
+    live.tick,
+  );
+  return { live, detail, analytics };
+}
+
+const advance = (milliseconds: number) =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(milliseconds);
+  });
+
 it('fixtures stay current years later and refresh panels on the counter while time stays fixed', async () => {
   const controller = new AbortController();
-  const client = createClient({
-    token: 'demo',
-    signal: controller.signal,
-    onRefused: vi.fn(),
-  });
-  const detail = vi.spyOn(client, 'detail');
-  const cards = vi.spyOn(client, 'analytics');
-  const snapshots = vi.spyOn(client, 'users');
+  const client = fixtureClient(controller.signal);
+  const detailLoad = vi.spyOn(client, 'detail');
+  const analyticsLoad = vi.spyOn(client, 'analytics');
+  const snapshotLoad = vi.spyOn(client, 'users');
   const session: Session = {
     token: 'demo',
     signal: controller.signal,
     client,
     onRefused: vi.fn(),
   };
-  const { result, unmount } = renderHook(() => {
-    const live = useLiveUsers(session);
-    return {
-      live,
-      detail: useRequest(
-        'detail:user-09',
-        (signal) => client.detail('user-09', signal),
-        live.tick,
-      ),
-      analytics: useRequest(
-        'analytics',
-        (signal) => client.analytics(signal),
-        live.tick,
-      ),
-    };
-  });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(400);
-  });
+  const { result, unmount } = renderHook(() => usePanels(session));
+  // Covers connecting, the first loads and the refresh queued behind them.
+  await advance(400);
+
+  const { live, detail } = result.current;
   expect(clock()).toBe(Date.parse(NOW));
-  expect(Date.parse(RESET_AT)).toBeGreaterThan(result.current.live.now);
+  expect(Date.parse(RESET_AT)).toBeGreaterThan(live.now);
   expect(
-    Date.parse(result.current.live.rows.get('user-09')?.suspendedUntil ?? ''),
-  ).toBeGreaterThan(result.current.live.now);
-  expect(result.current.detail.data?.recentRequests).not.toHaveLength(0);
+    Date.parse(live.rows.get('user-09')?.suspendedUntil ?? ''),
+  ).toBeGreaterThan(live.now);
+  expect(detail.data?.recentRequests).not.toHaveLength(0);
   expect(
-    result.current.detail.data?.recentRequests.every(
-      (record) => Date.parse(record.at) > result.current.live.now - 86_400_000,
+    detail.data?.recentRequests.every(
+      (record) => Date.parse(record.at) > live.now - DAY_MS,
     ),
   ).toBe(true);
-  expect(snapshots).toHaveBeenCalledTimes(1);
-  const detailLoads = detail.mock.calls.length;
-  const cardLoads = cards.mock.calls.length;
-  const tick = result.current.live.tick;
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(10_000);
-  });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(200);
-  });
+  expect(snapshotLoad).toHaveBeenCalledTimes(1);
+  expect(live.tick).toBe(1);
+
+  detailLoad.mockClear();
+  analyticsLoad.mockClear();
+  await advance(TICK_MS);
+  // The fixture client replies after 150 ms.
+  await advance(200);
+
   expect(result.current.live.now).toBe(Date.parse(NOW));
-  expect(result.current.live.tick).toBe(tick + 1);
-  expect(detail).toHaveBeenCalledTimes(detailLoads + 1);
-  expect(cards).toHaveBeenCalledTimes(cardLoads + 1);
-  expect(snapshots).toHaveBeenCalledTimes(2);
+  expect(result.current.live.tick).toBe(2);
+  expect(detailLoad).toHaveBeenCalledTimes(1);
+  expect(analyticsLoad).toHaveBeenCalledTimes(1);
+  expect(snapshotLoad).toHaveBeenCalledTimes(2);
   unmount();
   controller.abort();
 });
 
 it('fixture actions acknowledge increasing versions without mutating frozen rows', async () => {
-  const client = createClient({
-    token: 'demo',
-    signal: new AbortController().signal,
-    onRefused: vi.fn(),
-  });
-  const first = client.reset('user-01');
+  const client = fixtureClient();
+
+  const reset = client.reset('user-01');
   await vi.advanceTimersByTimeAsync(150);
-  await expect(first).resolves.toEqual({
-    ...users[0],
-    version: users[0].version + 1,
-  });
-  const second = client.setLimit('user-01', { limit: 250 });
+  await expect(reset).resolves.toEqual({ ...users[0], version: 13 });
+
+  const limitChange = client.setLimit('user-01', { limit: 250 });
   await vi.advanceTimersByTimeAsync(150);
-  await expect(second).resolves.toEqual({
-    ...users[0],
-    version: users[0].version + 2,
-  });
+  await expect(limitChange).resolves.toEqual({ ...users[0], version: 14 });
   expect(users[0].version).toBe(12);
 });
 
 it('fixture requests stop for either request or session cancellation', async () => {
   const session = new AbortController();
   const request = new AbortController();
-  const client = createClient({
-    token: 'demo',
-    signal: session.signal,
-    onRefused: vi.fn(),
-  });
+  const client = fixtureClient(session.signal);
+
   const read = client.users(request.signal);
   const readRejected = expect(read).rejects.toMatchObject({
     name: 'AbortError',
   });
   request.abort();
   await readRejected;
+
   const action = client.reset('user-01');
   const actionRejected = expect(action).rejects.toMatchObject({
     name: 'AbortError',
   });
   session.abort();
   await actionRejected;
-  await vi.advanceTimersByTimeAsync(300);
 });
 
 it('the fixture socket emits its three events once and disconnect cancels delivery', async () => {
@@ -141,11 +140,13 @@ it('the fixture socket emits its three events once and disconnect cancels delive
   socket.on('connect', connect);
   socket.on('rate:update', update);
   socket.on('rate:limit_exceeded', exceeded);
+
   await vi.advanceTimersByTimeAsync(6_000);
   expect(connect).toHaveBeenCalledOnce();
   expect(update).toHaveBeenCalledTimes(2);
   expect(exceeded).toHaveBeenCalledOnce();
   socket.disconnect();
+
   const cancelled = openSocket();
   cancelled.on('connect', connect);
   cancelled.disconnect();

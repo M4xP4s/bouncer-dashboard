@@ -2,9 +2,10 @@ import { MantineProvider } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import type { Client, ClientOptions } from './api/client.ts';
 import App from './App.tsx';
 
-const calls = vi.hoisted(() => ({
+const loads = vi.hoisted(() => ({
   users: vi.fn(),
   detail: vi.fn(),
   history: vi.fn(),
@@ -12,30 +13,48 @@ const calls = vi.hoisted(() => ({
 }));
 vi.mock('./api/index.ts', async () => {
   const fixtures = await import('./api/fixture-client.ts');
+  /** Counts a load, then lets the fixture client answer it. */
+  const counted =
+    <Args extends unknown[], Result>(
+      count: () => void,
+      load: (...args: Args) => Result,
+    ) =>
+    (...args: Args) => {
+      count();
+      return load(...args);
+    };
   return {
     clock: fixtures.clock,
     openSocket: fixtures.openSocket,
-    createClient: (...args: Parameters<typeof fixtures.createClient>) => {
-      const client = fixtures.createClient(...args);
-      for (const key of ['users', 'detail', 'history', 'analytics'] as const) {
-        const original = client[key];
-        // The spy records calls while the fixture client still supplies every response.
-        Object.assign(client, {
-          [key]: (...params: never[]) => {
-            calls[key](...params);
-            return (original as (...args: never[]) => unknown)(...params);
-          },
-        });
-      }
-      return client;
+    createClient: (options: ClientOptions): Client => {
+      const client = fixtures.createClient(options);
+      return {
+        ...client,
+        users: counted(loads.users, client.users),
+        detail: counted(loads.detail, client.detail),
+        history: counted(loads.history, client.history),
+        analytics: counted(loads.analytics, client.analytics),
+      };
     },
   };
 });
+
+// The interval at which the dashboard reconciles while the page is visible.
+const TICK_MS = 10_000;
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   sessionStorage.clear();
 });
+
+const advance = (milliseconds: number) =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(milliseconds);
+  });
+
+const tableRow = (userId: string) =>
+  within(screen.getByRole('row', { name: new RegExp(userId) }));
 
 it('renders dated fixtures years later and refreshes table, details, history and cards on the tick', async () => {
   vi.useFakeTimers({ now: new Date('2036-01-01') });
@@ -47,44 +66,31 @@ it('renders dated fixtures years later and refreshes table, details, history and
       <App />
     </MantineProvider>,
   );
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(400);
-  });
-  const suspended = screen.getByRole('row', { name: /user-09/ });
-  expect(
-    within(suspended).getByText(/throttling suspended until/i),
-  ).toBeTruthy();
-  expect(within(suspended).getByText(/11:00:00 UTC \(18m\)/)).toBeTruthy();
-  for (const [id, status] of [
-    ['user-01', 'OK'],
-    ['user-04', 'Warning'],
-    ['user-06', 'Exceeded'],
-  ]) {
-    expect(
-      within(screen.getByRole('row', { name: new RegExp(id) })).getByText(
-        status,
-      ),
-    ).toBeTruthy();
-  }
-  fireEvent.click(within(suspended).getByRole('button', { name: 'user-09' }));
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(200);
-  });
-  expect(
-    within(
-      screen.getByRole('region', { name: 'Recent requests' }),
-    ).getAllByRole('row').length,
-  ).toBeGreaterThan(1);
-  expect(screen.getByText(/Admitted:.*rejected:/)).toBeTruthy();
-  const counts = Object.fromEntries(
-    Object.entries(calls).map(([key, spy]) => [key, spy.mock.calls.length]),
+  // Covers connecting, the first loads and the refresh queued behind them.
+  await advance(400);
+
+  const suspended = tableRow('user-09');
+  expect(suspended.getByText(/throttling suspended until/i)).toBeTruthy();
+  expect(suspended.getByText(/11:00:00 UTC \(18m\)/)).toBeTruthy();
+  expect(tableRow('user-01').getByText('OK')).toBeTruthy();
+  expect(tableRow('user-04').getByText('Warning')).toBeTruthy();
+  expect(tableRow('user-06').getByText('Exceeded')).toBeTruthy();
+
+  fireEvent.click(suspended.getByRole('button', { name: 'user-09' }));
+  // The fixture client replies after 150 ms.
+  await advance(200);
+  const recentRequests = within(
+    screen.getByRole('region', { name: 'Recent requests' }),
   );
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(10000);
-  });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(200);
-  });
-  for (const key of ['users', 'detail', 'history', 'analytics'] as const)
-    expect(calls[key]).toHaveBeenCalledTimes(counts[key] + 1);
+  expect(recentRequests.getAllByRole('row').length).toBeGreaterThan(1);
+  expect(screen.getByText(/Admitted:.*rejected:/)).toBeTruthy();
+
+  vi.clearAllMocks();
+  await advance(TICK_MS);
+  await advance(200);
+
+  expect(loads.users).toHaveBeenCalledTimes(1);
+  expect(loads.detail).toHaveBeenCalledTimes(1);
+  expect(loads.history).toHaveBeenCalledTimes(1);
+  expect(loads.analytics).toHaveBeenCalledTimes(1);
 });
