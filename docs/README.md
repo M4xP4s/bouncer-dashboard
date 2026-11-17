@@ -109,9 +109,20 @@ stable document that grows as the capability does.
 
 Specifications are listed here as their pull requests are merged.
 
+| Specification | Covers |
+| --- | --- |
+| [Platform](specs/platform.md) | The workspace, start-up configuration, who a caller is, the Redis connection and the error response. |
+
 ### Quality navigation
 
 The additional expectations name six qualities: architecture, scalability,
-performance, reliability, security and maintainability. A table here will
-link each one to the specification sections that address it. It contains
-links only and is filled in as the specifications are written.
+performance, reliability, security and maintainability. The table links
+each one to the specification sections that address it. It contains links
+only and is filled in as the specifications are written; a quality without a
+row has no section yet.
+
+| Quality | Sections |
+| --- | --- |
+| Reliability | [Platform: behavior](specs/platform.md#behavior), [Platform: decisions](specs/platform.md#decisions) |
+| Security | [Platform: behavior](specs/platform.md#behavior), [Platform: limits](specs/platform.md#limits) |
+| Maintainability | [Platform: behavior](specs/platform.md#behavior), [Platform: decisions](specs/platform.md#decisions) |
