@@ -3,12 +3,9 @@ import type { Client } from '../api/client.ts';
 import type { LiveSocket, SocketEvents } from '../api/socket.ts';
 
 export function deferred<T>() {
-  let resolve: (value: T) => void = () => {
-    throw new Error('Promise not initialized');
-  };
-  let reject: (reason: unknown) => void = () => {
-    throw new Error('Promise not initialized');
-  };
+  // The promise executor runs at once, so both are assigned before the return.
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
   const promise = new Promise<T>((yes, no) => {
     resolve = yes;
     reject = no;

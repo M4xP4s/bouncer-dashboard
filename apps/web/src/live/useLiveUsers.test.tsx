@@ -1,6 +1,10 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { UserRow } from '@app/contracts';
+import type {
+  RateLimitExceededEvent,
+  RateUpdateEvent,
+  UserRow,
+} from '@app/contracts';
 import { clock, openSocket } from '../api/index.ts';
 import type { Session } from '../api/useSession.ts';
 import {
@@ -42,216 +46,240 @@ function setup() {
     client,
     onRefused: vi.fn(),
   };
-  const alert = vi.fn();
-  const hook = renderHook(() => useLiveUsers(session, alert));
+  const onLimitExceeded = vi.fn();
+  const hook = renderHook(() => useLiveUsers(session, onLimitExceeded));
   const connect = async () => {
     await act(async () =>
       socket.listeners.connect.forEach((listener) => listener()),
     );
   };
-  return { ...hook, controller, client, socket, session, alert, connect };
+  const emitUpdate = (event: RateUpdateEvent) =>
+    socket.listeners['rate:update'].forEach((listener) => listener(event));
+  const emitExceeded = (event: RateLimitExceededEvent) =>
+    socket.listeners['rate:limit_exceeded'].forEach((listener) =>
+      listener(event),
+    );
+  return {
+    ...hook,
+    controller,
+    client,
+    socket,
+    session,
+    onLimitExceeded,
+    connect,
+    emitUpdate,
+    emitExceeded,
+  };
+}
+
+async function advanceTime(milliseconds: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(milliseconds);
+  });
+}
+
+async function setVisibility(state: DocumentVisibilityState) {
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(state);
+  await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+}
+
+/** user-01's next request: one version and one millisecond after the last. */
+function numberedRequest(index: number): RateUpdateEvent {
+  const at = new Date(Date.parse(NOW) + index).toISOString();
+  return {
+    ...requestUpdate,
+    row: { ...requestUpdate.row, version: index + 20 },
+    request: { ...limitExceeded.request, id: `request-${index}`, at },
+  };
 }
 
 it('loads on connect and reconnect, and keeps a newer event ahead of a slow snapshot', async () => {
-  const h = setup();
-  const pending = deferred<UserRow[]>();
-  h.client.users.mockReturnValueOnce(pending.promise);
-  expect(h.client.users).not.toHaveBeenCalled();
-  await h.connect();
-  act(() =>
-    h.socket.listeners['rate:update'].forEach((listener) =>
-      listener(requestUpdate),
-    ),
-  );
-  await act(async () => pending.resolve(users));
-  expect(h.result.current.rows.get('user-01')).toBe(requestUpdate.row);
-  expect(h.result.current.snapshot.status).toBe('loaded');
-  expect(h.result.current.connection).toBe('live');
-  act(() => h.socket.listeners.disconnect.forEach((listener) => listener()));
-  expect(h.result.current.connection).toBe('disconnected');
-  await h.connect();
-  expect(h.client.users).toHaveBeenCalledTimes(2);
+  const { result, client, socket, connect, emitUpdate } = setup();
+  const slowSnapshot = deferred<UserRow[]>();
+  client.users.mockReturnValueOnce(slowSnapshot.promise);
+  expect(client.users).not.toHaveBeenCalled();
+
+  await connect();
+  act(() => emitUpdate(requestUpdate));
+  await act(async () => slowSnapshot.resolve(users));
+  expect(result.current.rows.get('user-01')).toBe(requestUpdate.row);
+  expect(result.current.snapshot.status).toBe('loaded');
+  expect(result.current.connection).toBe('live');
+
+  act(() => socket.listeners.disconnect.forEach((listener) => listener()));
+  expect(result.current.connection).toBe('disconnected');
+
+  await connect();
+  expect(client.users).toHaveBeenCalledTimes(2);
 });
 
 it('serializes snapshots and coalesces all requests during a pending snapshot once', async () => {
-  const h = setup();
+  const { result, client, connect } = setup();
   const pending = deferred<UserRow[]>();
-  const next = deferred<UserRow[]>();
-  h.client.users
+  const queued = deferred<UserRow[]>();
+  client.users
     .mockReturnValueOnce(pending.promise)
-    .mockReturnValueOnce(next.promise);
-  await h.connect();
+    .mockReturnValueOnce(queued.promise);
+
+  await connect();
   act(() => {
-    h.result.current.refresh();
-    h.result.current.refresh();
+    result.current.refresh();
+    result.current.refresh();
   });
-  await h.connect();
-  expect(h.client.users).toHaveBeenCalledTimes(1);
+  await connect();
+  expect(client.users).toHaveBeenCalledTimes(1);
+
   await act(async () => pending.resolve(users));
-  expect(h.client.users).toHaveBeenCalledTimes(2);
+  expect(client.users).toHaveBeenCalledTimes(2);
+
   const repaired = { ...users[0], used: 11 };
-  await act(async () => next.resolve([repaired]));
-  expect(h.result.current.rows.get('user-01')).toBe(repaired);
-  expect(h.client.users).toHaveBeenCalledTimes(2);
+  await act(async () => queued.resolve([repaired]));
+  expect(result.current.rows.get('user-01')).toBe(repaired);
+  expect(client.users).toHaveBeenCalledTimes(2);
 });
 
 it('ticks every 10 seconds while visible, pauses while hidden, and reconciles on visibility', async () => {
-  const h = setup();
-  await h.connect();
-  const initialTick = h.result.current.tick;
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(10_000);
-  });
-  expect(h.client.users).toHaveBeenCalledTimes(2);
-  expect(h.result.current.tick).toBe(initialTick + 1);
-  expect(h.result.current.now).toBe(Date.parse(NOW) + 10_000);
-  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
-  act(() => document.dispatchEvent(new Event('visibilitychange')));
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(20_000);
-  });
-  expect(h.client.users).toHaveBeenCalledTimes(2);
-  expect(h.result.current.tick).toBe(initialTick + 1);
-  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  await act(async () => document.dispatchEvent(new Event('visibilitychange')));
-  expect(h.client.users).toHaveBeenCalledTimes(3);
-  expect(h.result.current.now).toBe(Date.parse(NOW) + 30_000);
+  const { result, client, connect } = setup();
+  await connect();
+  const initialTick = result.current.tick;
+
+  await advanceTime(10_000);
+  expect(client.users).toHaveBeenCalledTimes(2);
+  expect(result.current.tick).toBe(initialTick + 1);
+  expect(result.current.now).toBe(Date.parse('2026-11-16T10:42:10.000Z'));
+
+  await setVisibility('hidden');
+  await advanceTime(20_000);
+  expect(client.users).toHaveBeenCalledTimes(2);
+  expect(result.current.tick).toBe(initialTick + 1);
+
+  await setVisibility('visible');
+  expect(client.users).toHaveBeenCalledTimes(3);
+  expect(result.current.now).toBe(Date.parse('2026-11-16T10:42:30.000Z'));
 });
 
-it.each(['old window', 'error'] as const)(
+it.each([
+  ['old window', () => Promise.resolve(users)],
+  ['error', () => Promise.reject(new Error('offline'))],
+])(
   'reconciles a boundary once when the snapshot returns %s',
-  async (outcome) => {
+  async (_outcome, snapshotAtBoundary) => {
     vi.setSystemTime(Date.parse(RESET_AT) - 5_000);
-    const h = setup();
-    await h.connect();
-    if (outcome === 'error')
-      h.client.users.mockRejectedValueOnce(new Error('offline'));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
-    });
-    expect(h.client.users).toHaveBeenCalledTimes(2);
-    expect(h.result.current.now).toBe(Date.parse(RESET_AT));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(4_999);
-    });
-    expect(h.client.users).toHaveBeenCalledTimes(2);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1);
-    });
-    expect(h.client.users).toHaveBeenCalledTimes(3);
-    expect(h.result.current.rows.size).toBe(users.length);
+    const { result, client, connect } = setup();
+    await connect();
+    client.users.mockImplementationOnce(snapshotAtBoundary);
+
+    await advanceTime(5_000);
+    expect(client.users).toHaveBeenCalledTimes(2);
+    expect(result.current.now).toBe(Date.parse(RESET_AT));
+
+    // The third snapshot is the regular 10-second tick, not a second boundary.
+    await advanceTime(4_999);
+    expect(client.users).toHaveBeenCalledTimes(2);
+    await advanceTime(1);
+    expect(client.users).toHaveBeenCalledTimes(3);
+    expect(result.current.rows.size).toBe(users.length);
   },
 );
 
 it('does not schedule a boundary that is already past', async () => {
   vi.setSystemTime(Date.parse(RESET_AT) + 1);
-  const h = setup();
-  await h.connect();
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(9_999);
-  });
-  expect(h.client.users).toHaveBeenCalledTimes(1);
+  const { client, connect } = setup();
+  await connect();
+
+  await advanceTime(9_999);
+
+  expect(client.users).toHaveBeenCalledTimes(1);
 });
 
 it('a failed reconciliation keeps existing rows and reports the error', async () => {
-  const h = setup();
-  await h.connect();
-  const held = h.result.current.rows;
+  const { result, client, connect } = setup();
+  await connect();
+  const heldRows = result.current.rows;
   const error = new Error('snapshot unavailable');
-  h.client.users.mockRejectedValueOnce(error);
-  await act(async () => h.result.current.refresh());
-  expect(h.result.current.rows).toBe(held);
-  expect(h.result.current.snapshot).toEqual({ status: 'error', error });
+  client.users.mockRejectedValueOnce(error);
+
+  await act(async () => result.current.refresh());
+
+  expect(result.current.rows).toBe(heldRows);
+  expect(result.current.snapshot).toEqual({ status: 'error', error });
 });
 
 it('retains a snapshot failure while its queued refresh is pending and clears it on success', async () => {
-  const h = setup();
-  await h.connect();
-  const heldRows = h.result.current.rows;
+  const { result, client, connect } = setup();
+  await connect();
+  const heldRows = result.current.rows;
   const failed = deferred<UserRow[]>();
   const queued = deferred<UserRow[]>();
-  h.client.users
+  client.users
     .mockReturnValueOnce(failed.promise)
     .mockReturnValueOnce(queued.promise);
+
   act(() => {
-    h.result.current.refresh();
-    h.result.current.refresh();
+    result.current.refresh();
+    result.current.refresh();
   });
   const error = new Error('The request timed out after 10 seconds.');
   await act(async () => failed.reject(error));
-  expect(h.client.users).toHaveBeenCalledTimes(3);
-  expect(h.result.current.snapshot).toEqual({ status: 'error', error });
-  expect(h.result.current.rows).toBe(heldRows);
+  expect(client.users).toHaveBeenCalledTimes(3);
+  expect(result.current.snapshot).toEqual({ status: 'error', error });
+  expect(result.current.rows).toBe(heldRows);
+
   await act(async () => queued.resolve(users));
-  expect(h.result.current.snapshot).toEqual({ status: 'loaded', error: null });
+  expect(result.current.snapshot).toEqual({ status: 'loaded', error: null });
 });
 
 it('applies current alerts once, drops stale alerts whole, and never fetches for events', () => {
-  const h = setup();
+  const { result, client, onLimitExceeded, emitUpdate, emitExceeded } = setup();
+
   act(() => {
-    h.socket.listeners['rate:limit_exceeded'].forEach((listener) =>
-      listener(limitExceeded),
-    );
-    h.socket.listeners['rate:limit_exceeded'].forEach((listener) =>
-      listener(limitExceeded),
-    );
-    h.socket.listeners['rate:update'].forEach((listener) =>
-      listener(resetUpdate),
-    );
+    emitExceeded(limitExceeded);
+    emitExceeded(limitExceeded);
+    emitUpdate(resetUpdate);
   });
-  expect(h.alert).toHaveBeenCalledExactlyOnceWith(limitExceeded);
-  expect(h.result.current.liveRecords.get('user-05')).toEqual([
+  expect(onLimitExceeded).toHaveBeenCalledExactlyOnceWith(limitExceeded);
+  expect(result.current.liveRecords.get('user-05')).toEqual([
     limitExceeded.request,
   ]);
+
   act(() =>
-    h.result.current.applyRow({ ...limitExceeded.row, version: 102, used: 0 }),
+    result.current.applyRow({ ...limitExceeded.row, version: 102, used: 0 }),
   );
-  act(() =>
-    h.socket.listeners['rate:limit_exceeded'].forEach((listener) =>
-      listener(limitExceeded),
-    ),
-  );
-  expect(h.alert).toHaveBeenCalledTimes(1);
-  expect(h.result.current.rows.get('user-05')?.used).toBe(0);
-  expect(h.client.users).not.toHaveBeenCalled();
+  act(() => emitExceeded(limitExceeded));
+  expect(onLimitExceeded).toHaveBeenCalledTimes(1);
+  expect(result.current.rows.get('user-05')?.used).toBe(0);
+  expect(client.users).not.toHaveBeenCalled();
 });
 
 it('keeps the newest 100 applied live records per user and ignores obsolete requests', () => {
-  const h = setup();
+  const { result, client, emitUpdate } = setup();
+
   act(() => {
-    for (let index = 0; index < 105; index++) {
-      const event = {
-        ...requestUpdate,
-        row: { ...requestUpdate.row, version: index + 20 },
-        request: {
-          ...limitExceeded.request,
-          id: `request-${index}`,
-          at: new Date(Date.parse(NOW) + index).toISOString(),
-        },
-      };
-      h.socket.listeners['rate:update'].forEach((listener) => listener(event));
-    }
-    h.socket.listeners['rate:update'].forEach((listener) =>
-      listener(requestUpdate),
-    );
+    for (let index = 0; index < 105; index++)
+      emitUpdate(numberedRequest(index));
+    // Obsolete: its version 13 is below every numbered request (20 and up).
+    emitUpdate(requestUpdate);
   });
-  const records = h.result.current.liveRecords.get('user-01');
+
+  const records = result.current.liveRecords.get('user-01');
   expect(records).toHaveLength(100);
   expect(records?.[0].id).toBe('request-104');
   expect(records?.[99].id).toBe('request-5');
-  expect(h.client.users).not.toHaveBeenCalled();
+  expect(client.users).not.toHaveBeenCalled();
 });
 
 it('stops old callbacks, pending snapshots, row applies and refreshes on session abort', async () => {
-  const h = setup();
+  const { result, controller, client, socket, session, connect } = setup();
   const pending = deferred<UserRow[]>();
-  h.client.users.mockReturnValueOnce(pending.promise);
-  const oldUpdate = [...h.socket.listeners['rate:update']][0];
-  const oldError = [...h.socket.listeners.connect_error][0];
-  await h.connect();
-  act(() => h.result.current.refresh());
-  h.controller.abort();
-  const held = h.result.current;
+  client.users.mockReturnValueOnce(pending.promise);
+  // Taken before the abort unregisters them: a late frame can still call them.
+  const [oldUpdate] = socket.listeners['rate:update'];
+  const [oldError] = socket.listeners.connect_error;
+  await connect();
+  act(() => result.current.refresh());
+
+  controller.abort();
+  const held = result.current;
   act(() => {
     oldUpdate(requestUpdate);
     oldError(new Error('Unauthorized'));
@@ -259,59 +287,60 @@ it('stops old callbacks, pending snapshots, row applies and refreshes on session
     held.refresh();
   });
   await act(async () => pending.resolve(users));
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(30_000);
-  });
-  expect(h.result.current).toBe(held);
-  expect(h.client.users).toHaveBeenCalledTimes(1);
-  expect(h.session.onRefused).not.toHaveBeenCalled();
-  expect(h.socket.disconnect).toHaveBeenCalledOnce();
+  await advanceTime(30_000);
+
+  expect(result.current).toBe(held);
+  expect(client.users).toHaveBeenCalledTimes(1);
+  expect(session.onRefused).not.toHaveBeenCalled();
+  expect(socket.disconnect).toHaveBeenCalledOnce();
 });
 
 it('removes exactly its own socket callbacks and timers when unmounted', async () => {
-  const h = setup();
-  await h.connect();
-  const added = vi.mocked(h.socket.on).mock.calls;
-  h.unmount();
-  expect(vi.mocked(h.socket.off).mock.calls).toEqual(added);
-  expect(h.socket.disconnect).toHaveBeenCalledOnce();
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(30_000);
-  });
-  expect(h.client.users).toHaveBeenCalledTimes(1);
+  const { client, socket, connect, unmount } = setup();
+  await connect();
+  const added = vi.mocked(socket.on).mock.calls;
+
+  unmount();
+
+  expect(vi.mocked(socket.off).mock.calls).toEqual(added);
+  expect(socket.disconnect).toHaveBeenCalledOnce();
+  await advanceTime(30_000);
+  expect(client.users).toHaveBeenCalledTimes(1);
 });
 
 it('keeps a fixed clock but advances the panel refresh signal', async () => {
   vi.mocked(clock).mockReturnValue(Date.parse(NOW));
   vi.setSystemTime(new Date('2036-01-01'));
-  const h = setup();
-  await h.connect();
-  const tick = h.result.current.tick;
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(30_000);
-  });
-  expect(h.result.current.tick).toBe(tick + 3);
-  expect(h.result.current.now).toBe(Date.parse(NOW));
-  expect(h.client.users).toHaveBeenCalledTimes(4);
+  const { result, client, connect } = setup();
+  await connect();
+  const initialTick = result.current.tick;
+
+  await advanceTime(30_000);
+
+  expect(result.current.tick).toBe(initialTick + 3);
+  expect(result.current.now).toBe(Date.parse(NOW));
+  expect(client.users).toHaveBeenCalledTimes(4);
 });
 
-// A socket frame that is not a well-formed event must be ignored whole: no row,
-// no live record and no alert. Without the guards one bad frame would put an
-// invalid row (unknown status, unreadable time) into the live table.
+// One bad frame must not put an invalid row (unknown status, unreadable time)
+// into the live table, so it is ignored whole: no row, no record, no alert.
 it.each([
   [
     'rate:update',
     { ...requestUpdate, row: { ...requestUpdate.row, status: 'Bogus' } },
   ],
   ['rate:limit_exceeded', { ...limitExceeded, retryAt: 'soon' }],
-] as const)('ignores a malformed %s event', (event, payload) => {
-  const h = setup();
+] as const)('ignores a malformed %s event', (event, frame) => {
+  const { result, socket, onLimitExceeded } = setup();
+
+  // The cast stands in for the wire, which delivers JSON no type has checked.
   act(() =>
-    h.socket.listeners[event].forEach((listener) =>
-      (listener as (value: unknown) => void)(payload),
+    socket.listeners[event].forEach((listener) =>
+      (listener as (frame: unknown) => void)(frame),
     ),
   );
-  expect(h.result.current.rows.size).toBe(0);
-  expect(h.result.current.liveRecords.size).toBe(0);
-  expect(h.alert).not.toHaveBeenCalled();
+
+  expect(result.current.rows.size).toBe(0);
+  expect(result.current.liveRecords.size).toBe(0);
+  expect(onLimitExceeded).not.toHaveBeenCalled();
 });
