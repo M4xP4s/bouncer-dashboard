@@ -41,6 +41,19 @@ and the error response. Items are cited as [the requirements][req] name them:
    "Internal server error" whose cause is logged, not sent. (Backend 6;
    Expectation: security; pitfall [P8])
 
+The start-up of rules 2 and 5 in one picture:
+
+```mermaid
+flowchart LR
+    Start["Process starts"] --> Config{"Configuration valid?"}
+    Config -->|no| BadConfig["Exit 1 with one error naming every bad variable"]
+    Config -->|yes| Redis{"Redis answers?"}
+    Redis -->|"nothing listens: at once"| NoRedis["Exit 1, naming the host and not the URL"]
+    Redis -->|"accepts, then silent: about 3 s"| NoRedis
+    Redis -->|yes| Listen["Listen on PORT under /api"]
+    Listen -.->|"connection lost later"| Retry["Keep listening, reconnect every 500 ms"]
+```
+
 ## Decisions
 
 **Identity comes from a credential.** The brief wants a quota "based on user
@@ -100,6 +113,8 @@ Unit, no Redis (`npm test`):
 
 Gap: rule 4 has no case yet. The code that enforces it, the socket handshake
 and the admin routes, does not exist; its cases are added with that code.
+Nothing imports `@app/contracts` yet, so the build does not compile it; the
+first import comes with the rate limiter.
 
 ## Milestone
 
