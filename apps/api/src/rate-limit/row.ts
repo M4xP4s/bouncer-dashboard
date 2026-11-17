@@ -4,6 +4,8 @@ import { resetAt, userFields, windowStart } from './keys.js';
 /** The base limit of a user without a custom one. Not configurable. */
 export const DEFAULT_LIMIT = 100;
 
+const WARNING_PERCENT = 90;
+
 /**
  * The replies of the row read, in the order the commands are queued:
  * `ZCARD` of the window, `GET` of the custom limit, of the extra grant and
@@ -17,12 +19,15 @@ export type RowReplies = [
   user: Record<string, string>,
 ];
 
+/** How many trailing transaction replies form a `RowReplies`. */
+export const ROW_REPLY_COUNT: RowReplies['length'] = 5;
+
 const iso = (ms: number): string => new Date(ms).toISOString();
 
 function statusFor(used: number, total: number): Status {
   if (used >= total) return 'Exceeded';
   // Integer arithmetic preserves the threshold for non-round limits.
-  if (used * 10 >= total * 9) return 'Warning';
+  if (used * 100 >= total * WARNING_PERCENT) return 'Warning';
   return 'OK';
 }
 

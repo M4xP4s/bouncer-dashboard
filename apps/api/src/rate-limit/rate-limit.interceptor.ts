@@ -9,7 +9,12 @@ import {
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
-import type { ApiError, RateLimitedError, RequestRecord } from '@app/contracts';
+import type {
+  ApiError,
+  RateLimitedError,
+  RequestRecord,
+  UserRow,
+} from '@app/contracts';
 import type { Response } from 'express';
 import type { Observable } from 'rxjs';
 import {
@@ -25,6 +30,21 @@ import {
 } from './rate-limit.store.js';
 
 const COUNT_HEADER = 'x-count';
+
+/** `HH:MM:SS` of an ISO timestamp. */
+const clockTime = (iso: string): string => iso.slice(11, 19);
+
+function rateLimitedError(row: UserRow, seconds: number): RateLimitedError {
+  return {
+    statusCode: HttpStatus.TOO_MANY_REQUESTS,
+    error: 'Too Many Requests',
+    message:
+      `Rate limit of ${row.total} requests per hour exceeded. ` +
+      `Try again at ${clockTime(row.resetAt)} UTC.`,
+    retryAt: row.resetAt,
+    retryAfterSeconds: seconds,
+  };
+}
 
 // Runs after UserTokenGuard; translates the store’s decision into HTTP.
 @Injectable()
@@ -70,16 +90,10 @@ export class RateLimitInterceptor implements NestInterceptor {
       const seconds = retryAfterSeconds(now);
       response.setHeader('Retry-After', `${seconds}`);
       response.setHeader(COUNT_HEADER, '0');
-      const body: RateLimitedError = {
-        statusCode: 429,
-        error: 'Too Many Requests',
-        message:
-          `Rate limit of ${row.total} requests per hour exceeded. ` +
-          `Try again at ${row.resetAt.slice(11, 19)} UTC.`,
-        retryAt: row.resetAt,
-        retryAfterSeconds: seconds,
-      };
-      throw new HttpException(body, HttpStatus.TOO_MANY_REQUESTS);
+      throw new HttpException(
+        rateLimitedError(row, seconds),
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
 
     // The remaining quota of the admission that just happened, taken from
@@ -102,7 +116,7 @@ export class RateLimitInterceptor implements NestInterceptor {
       // The transaction may or may not have run, so the message makes no
       // claim about the quota.
       const body: ApiError = {
-        statusCode: 503,
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
         error: 'Service Unavailable',
         message: 'The request was not processed. It may be retried.',
       };
@@ -122,9 +136,7 @@ export class RateLimitInterceptor implements NestInterceptor {
     try {
       return await this.store.recordOutcome(userId, now, admission);
     } catch (error) {
-      if (!(error instanceof StoreUnavailable)) {
-        throw error;
-      }
+      if (!(error instanceof StoreUnavailable)) throw error;
       this.logger.error('request bookkeeping failed', error.cause);
       return false;
     }

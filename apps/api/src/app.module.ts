@@ -10,10 +10,7 @@ import { RedisModule } from './redis/redis.module.js';
 import { SampleController } from './sample/sample.controller.js';
 
 @Module({
-  imports: [
-    ConfigModule,
-    RedisModule,
-  ],
+  imports: [ConfigModule, RedisModule],
   controllers: [SampleController],
   providers: [
     { provide: APP_FILTER, useClass: ApiErrorFilter },

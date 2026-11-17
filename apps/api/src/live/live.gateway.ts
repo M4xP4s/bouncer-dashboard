@@ -36,21 +36,23 @@ export class LiveGateway implements OnGatewayInit {
     });
   }
 
-  // Delivery failure must not change an already committed quota decision.
   emitUpdate(event: RateUpdateEvent): void {
-    try {
-      this.server.emit('rate:update', event);
-    } catch (error) {
-      this.logger.error('rate:update was not sent', error);
-    }
+    this.send('rate:update', event);
   }
 
-  /** Same best-effort delivery as updates; a missed alert cannot fail a request. */
   emitLimitExceeded(event: RateLimitExceededEvent): void {
+    this.send('rate:limit_exceeded', event);
+  }
+
+  // Delivery failure must not change an already committed quota decision.
+  private send<E extends keyof ServerToClientEvents>(
+    name: E,
+    ...payload: Parameters<ServerToClientEvents[E]>
+  ): void {
     try {
-      this.server.emit('rate:limit_exceeded', event);
+      this.server.emit(name, ...payload);
     } catch (error) {
-      this.logger.error('rate:limit_exceeded was not sent', error);
+      this.logger.error(`${name} was not sent`, error);
     }
   }
 }

@@ -5,17 +5,16 @@ import type { RequestOutcome, RequestRecord, UserRow } from '@app/contracts';
 import { REDIS, type RedisClient } from '../redis/redis.module.js';
 import {
   counterExpiry,
+  DENIED_COUNT_TTL_SECONDS,
+  HISTORY_MAX_RECORDS,
+  HISTORY_TTL_SECONDS,
   keys,
   minuteInWindow,
   statField,
   userFields,
   windowExpiry,
 } from './keys.js';
-import { buildRow, type RowReplies } from './row.js';
-
-const HISTORY_MAX_RECORDS = 100;
-const HISTORY_TTL_SECONDS = 86_400;
-const DENIED_COUNT_TTL_SECONDS = 172_800;
+import { buildRow, ROW_REPLY_COUNT, type RowReplies } from './row.js';
 
 // Connection/execution failures become 503; Redis error replies remain 500.
 export class StoreUnavailable extends Error {
@@ -56,9 +55,9 @@ export class RateLimitStore {
         .hSet(userKey, userFields.lastRequestAt, `${now}`);
       this.appendRowRead(multi, userId, now);
     });
-    // The last five replies belong to appendRowRead; Redis's dynamic queue
+    // The trailing replies belong to appendRowRead; Redis's dynamic queue
     // loses its tuple type, so the assertion stays at this library boundary.
-    const rowReplies = replies.slice(-5) as RowReplies;
+    const rowReplies = replies.slice(-ROW_REPLY_COUNT) as RowReplies;
     const [count, limit, extra, suspend, userFieldsReply] = rowReplies;
 
     // The count includes this request, so "at the cap" is still admitted.
