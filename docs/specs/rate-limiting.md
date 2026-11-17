@@ -2,16 +2,17 @@
 
 ## Scope
 
-The per-user quota: windows, row and status, admission, `x-count`, the 429 and
-503, the keys, `RateLimitInterceptor` and its sample route. It answers Backend 1
-to 7 of [the requirements](../REQUIREMENTS.md), Core features 1 to 4 in part and
+The per-user quota of the sample routes: windows, admission, `x-count`, the 429
+and store errors. It answers Backend 1 to 7 of
+[the requirements](../REQUIREMENTS.md), Core features 1 to 4 in part and
 reliability, cited (Backend 5), (Core feature 1), (Expectation: reliability).
 
 ## Behavior
 
 1. **Interpretation of "Resets the count every hour".** The window is one UTC
-   clock hour: zero at each boundary, Reset Time the next one. One clock
-   reading per request decides window and suspension. (Backend 3; [P25])
+   clock hour: zero at each boundary, Reset Time the next one. One clock reading
+   decides the window and suspension for the quota and dates its record; the
+   sample body's `at` is read separately. (Backend 3; [P25])
 2. The cap is the limit (100 unless a custom one is stored) plus the window's
    extra grant. Counting a request and fixing its position is one store
    transaction, so concurrent requests never pass it. (Backend 5; [P24])
@@ -24,42 +25,39 @@ reliability, cited (Backend 5), (Core feature 1), (Expectation: reliability).
 5. One function, `buildRow`, builds every `UserRow`, so the table cannot
    disagree with the limiter. (Core feature 1; Core feature 2)
 6. **Interpretation of "Warning >= 90%, OK <= 90%".** Exactly 90% sits in two
-   bands; it is Warning. Exceeded at usage >= cap, else Warning when
-   `used * 10 >= total * 9`, in integers. (Core feature 4; [P3])
+   bands; it is Warning. Exceeded at `used >= total`, else Warning when, in
+   integers, `used * 100 >= total * WARNING_PERCENT` (90). (Core feature 4;
+   [P3])
 7. Every admitted request, bypassed ones too, carries `x-count`: the remaining
    quota in the row its own admission produced (99 for a fresh user, 0 for the
    hundredth), never read again. (Backend 4; [P2])
-8. A rejected request gets 429 with `x-count: 0`, no handler run and a
+8. A rejected request gets 429, `x-count: 0`, no handler run and a
    `RateLimitedError` body: `message` "Rate limit of 100 requests per hour
-   exceeded. Try again at HH:00:00 UTC." at the default cap (the message uses
-   the effective cap), `retryAt` (the next boundary),
-   `retryAfterSeconds`. **Addition:** `Retry-After`, whole seconds rounded up,
-   at least 1. (Backend 6)
-9. During admission, a disconnected client or a transaction rejection that is
-   not the Redis client's `ErrorReply` becomes `StoreUnavailable`: 503 "The
-   request was not processed. It may be retried." without `x-count`, and no
-   handler runs. A Redis `ErrorReply` (including `MultiErrorReply`) propagates
-   to the generic 500 handler; its details are logged, not returned. Neither
-   response promises that quota was untouched. No retry or per-process fallback.
-   Errors outside transaction execution remain 500. (Expectation: reliability; [P8])
+   exceeded. Try again at HH:00:00 UTC." (with the effective cap), `retryAt`
+   (the next boundary), `retryAfterSeconds`. **Addition:** `Retry-After`, whole
+   seconds rounded up, at least 1. (Backend 6)
+9. In admission, a disconnected client or a transaction rejection other than the
+   Redis client's `ErrorReply` becomes `StoreUnavailable`: 503 "The request was
+   not processed. It may be retried." without `x-count` or handler run. An
+   `ErrorReply` (also `MultiErrorReply`) or an error outside the transaction is
+   a generic 500, details logged, not returned. Neither promises untouched
+   quota; no retry or per-process fallback. (Expectation: reliability; [P8])
 10. Bookkeeping, a second transaction before the handler, removes a rejected
-    entry and records the outcome. `StoreUnavailable` is logged and preserves
-    the admission or 429; a rejected request emits no alert in that case.
-    An `ErrorReply` or other defect instead produces a generic 500 without
-    `x-count`, handler execution or events, even after admission or denial.
-    Completed Redis writes are not rolled back and admitted quota is not refunded.
-    When bookkeeping succeeds or only the store is unavailable,
-    admitted requests emit `rate:update`; a rejection emits
-    `rate:limit_exceeded` only as the first for its user, window and re-arm
-    generation ([live-updates](live-updates.md#behavior)).
-    (Core feature 1; [P6], [P7])
+    entry and records the outcome. `StoreUnavailable` there is logged and keeps
+    the admission or 429; an `ErrorReply` or defect gives a 500 without
+    `x-count`, handler run or events. Nothing is rolled back and admitted quota
+    is not refunded. Events follow [live updates](live-updates.md#behavior)
+    rules 1 and 2. (Core feature 1; [P6], [P7])
+11. A request that reaches the interceptor without a `userId`, or with an empty
+    or non-string one, gets 401 before any store call, header, event or handler,
+    so the interceptor applied without its guard never builds a shared bucket.
+    (Backend 1)
 
 ## Interface
 
 `GET /api/sample` (`SampleResponse`) and `GET /api/sample/fail` (same quota,
-then fails) alone use `RateLimitInterceptor` (Backend 2), after the identity
-guard ([platform](platform.md#behavior)); a missing or wrong token is 401 and
-counts nothing.
+then fails) alone use `RateLimitInterceptor` (Backend 2), after the
+[identity guard](platform.md#behavior).
 
 | Key (`{u}` user ID, `{h}` window start in ms, `{g}` generation) | Holds | Expiry ([P9]) |
 | --- | --- | --- |
@@ -75,105 +73,89 @@ counts nothing.
 
 ### Concurrent safety
 
-Backend 5 asks that no request slip through, so the
-decision rests on a position the write itself claims, read with the policy in
-the same transaction. One `MULTI`/`EXEC` per request: `ZADD` a unique ID,
-`PEXPIREAT`, bump the version and last request time, then `ZCARD` and the policy
-reads. TypeScript compares the count, which includes the request, with the cap;
-the bookkeeping removes a rejection's ID. A store-side script decides in one
-trip but moves the logic away from the mocked tests. `INCR` plus `EXPIRE` can
-leave a key without expiry ([P5]), and a late decrement after a reset admits
-one too many. Cost: a second round trip per request; rejected and bypassed
-entries stay until removed or expired.
+Backend 5 asks that no request slip through, so the decision rests on a position
+the write itself claims: one `MULTI`/`EXEC` adds a unique ID to the window set,
+then reads the count, which includes the request, and the policy. A store-side
+script decides in one trip but moves the logic away from the mocked tests;
+`INCR` plus `EXPIRE` can leave a key without expiry ([P5]). Cost: a second
+transaction, for bookkeeping; rejected and bypassed entries stay until removed
+or expired.
 
 ### Fixed hour
 
-A rolling window is exact but needs another structure; the fixed
-hour allows twice the cap across a boundary and needs synchronized clocks. Keys
-expire an hour late so a slow clock never counts 1 on a deleted key.
+A rolling window is exact but needs another structure; the fixed hour allows
+twice the cap across a boundary and needs synchronized clocks. Keys expire an
+hour late so a slow clock never counts 1 on a deleted key.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API and Redis
+    C->>A: 10:00 to 10:59 UTC, requests 1 to 100 (key rl:win:{u}:{10:00})
+    A-->>C: 200, x-count 99 down to 0
+    C->>A: request 101: counted, then removed by bookkeeping
+    A-->>C: 429, x-count 0, Retry-After until 11:00
+    C->>A: 11:00, request 1 of the new hour (key rl:win:{u}:{11:00})
+    A-->>C: 200, x-count 99, and the 10:00 key expires at 12:00
+```
 
 ### Error classification
 
-Classify by the client's error type in
-one transaction wrapper: a server error reply is surfaced as 500; other
-execution failures are treated as unavailable. This avoids labelling wrong-type
-keys as an outage. Parsing message prefixes would couple policy to error text;
-a larger catalogue of transient replies is deferred. Bookkeeping tolerates
-unavailability, but exposes error replies and defects rather than hiding them.
+Classify by the client's error type in one transaction wrapper: a server error
+reply is a 500, other execution failures are unavailable, so a wrong-type key is
+not labelled an outage ([P28]). Parsing message prefixes would couple policy to
+error text; a catalogue of transient replies (`LOADING`, `BUSY`, `READONLY`) is
+deferred, so they are 500 too. Bookkeeping tolerates unavailability but exposes
+error replies and defects.
 
 ## Test plan
 
-Mocked store (`vitest-mock-extended`), no Redis, in `apps/api/src/`:
-- `rate-limit/rate-limit.store.spec.ts`: cap, bypass, command order, outage;
-  admission and bookkeeping preserve Redis error replies unwrapped.
-- `rate-limit/rate-limit.interceptor.spec.ts`,
-  `sample/sample.controller.spec.ts`: headers, 429, 503 with its cause
-  logged, events; the outcome is recorded at the time of the decision
-  although the clock has moved on ([P25]); bookkeeping
-  defects propagate for both admitted and denied requests without running the handler.
-- `rate-limit/row.spec.ts`: status around the 90% line, limits 100 and 11.
-- `rate-limit/keys.spec.ts`: a millisecond around the boundary, also for the
-  window key; expiry.
+Mocked store (`vitest-mock-extended`, no Redis), in `apps/api/src/`:
+- `rate-limit/rate-limit.store.spec.ts`: rules 2, 3, 4, 9, 10.
+- `rate-limit/rate-limit.interceptor.spec.ts`: rules 1, 7, 8, 9, 10, 11.
+- `sample/sample.controller.spec.ts`: rules 3, 8, 9 over HTTP.
+- `rate-limit/row.spec.ts`: rules 4, 5, 6 (limits 100 and 11).
+- `rate-limit/keys.spec.ts`: rules 1, 8 (a millisecond around the hour); key
+  names, expiries.
 
-Real store, in `apps/api/test/`, started with the whole application (the
-command, and the Redis server of its own that the suite needs, are in the
-[README](../../README.md#verification); the suite empties the database it uses):
-- `admission.e2e-spec.ts`: `x-count` 99 down to 0, then the 429; the quota
-  changes exactly at the UTC hour ([P25]); one user's exhaustion leaves
-  another's quota; a failing handler still counts; a key of the wrong type
-  answers 500, not 503 ([P8]); a 401 and a spoofed ID count nothing.
-- `concurrency.e2e-spec.ts`: 200 concurrent requests admit exactly 100 with
-  distinct `x-count` values ([P24]); a reset or a grant between two batches
-  keeps every later admission; during 1000 rejections, 20 requests of
-  another user take under 1 s each, a loose smoke bound ([P7]); every
-  snapshot pairs usage and version.
-- `store-races.e2e-spec.ts`: clocks on both sides of an hour admit at most
-  one cap per hour; a skipped rejection cleanup only lowers capacity, until
-  a reset; recent requests are ordered by time and ID, not by completion.
-- `expiry.e2e-spec.ts`: every key written has the expiry of its rule ([P9]);
-  a suspension and an hour that end while idle change the snapshot at the
-  same version; a record leaves the detail at exactly 24 h.
+Real store, in `apps/api/test/`, with the whole application (command and Redis
+server in the [README](../../README.md#verification); the suite empties its
+database):
+- `admission.e2e-spec.ts`: rules 1, 3, 7, 8, 9; a 401 and a spoofed ID count
+  nothing.
+- `concurrency.e2e-spec.ts`: rules 2, 7: 200 concurrent requests admit exactly
+  100; [P7].
+- `store-races.e2e-spec.ts`: rules 1, 3, 10: clocks on both sides of an hour, a
+  skipped cleanup.
+- `expiry.e2e-spec.ts`: rule 4 and every expiry of the key table.
 
-Two API processes on one Redis, in `scripts/two-process-check.mjs`
-(`npm run check:two-process` after a build, on the Redis server of the
-real-store suite, whose database it empties): one request through each
-process uses one quota (99, then 98 remaining); 200 concurrent requests
-spread over both admit exactly 100, with each `x-count` from 0 to 99 once,
-and the window holds 100 entries.
+Two API processes sharing one quota: [live updates](live-updates.md#test-plan).
 
 ## Milestone
 
 ```sh
 npm ci && cp .env.example .env && docker compose up -d redis
 npm test && npm run start:dev -w apps/api
+# Second shell, on a fresh store and within one UTC hour:
+U=localhost:3000/api/sample; T='Authorization: Bearer demo-token-03'
 for h in 'X-None: 1' 'Authorization: Bearer wrong'; do
-  curl -si -H "$h" localhost:3000/api/sample | head -1; done
-for i in $(seq 101); do curl -si -H 'Authorization: Bearer demo-token-03' \
-  localhost:3000/api/sample | grep -iE '^(HTTP|x-count|retry-after)'; done
+  curl -si -H "$h" $U | head -1; done
+for i in $(seq 100); do curl -si -H "$T" $U | grep -iE '^(HTTP|x-count)'; done
+curl -si -H "$T" $U
 ```
 
-In a second shell, expect `HTTP/1.1 401` twice, then `x-count` 99 down to 0 (the
-401s counted nothing), then `HTTP/1.1 429` with `Retry-After` up to 3600,
-`x-count` 0 and the body of rule 8. After `docker compose stop redis` a request
-gets 503 without `x-count` once the disconnect is detected; no total request
-deadline is promised. After `docker compose start redis` and then
-`docker compose pause redis`, a request waits and gets the same 503 within
-about 4 s ([platform](platform.md#behavior), rule 7); after
-`docker compose unpause redis` requests succeed again without a restart.
+Expect `HTTP/1.1 401` twice, `HTTP/1.1 200` with `x-count` 99 down to 0, then
+the whole 429: `Retry-After` up to 3600, `x-count: 0` and the body of rule 8.
+After `docker compose stop redis` a request gets 503 without `x-count` once the
+disconnect is detected; no total deadline is promised. After `start` and then
+`pause`, the same 503 comes within about 4 s ([platform](platform.md#behavior),
+rule 7); after `unpause` requests succeed again without a restart.
 
 ## Limits
 
-All Redis error replies become 500, including potentially temporary `LOADING`,
-`BUSY`, `READONLY` and out-of-memory replies. Conversely, a non-`ErrorReply`
-execution failure is classified as unavailable without proving it is temporary.
-A bookkeeping error reply can replace a planned success or 429 with 500 after
-quota or telemetry writes have already happened; there is no rollback or retry.
-
-
 Mocked-store tests cannot show shared-store atomicity. A boundary burst of twice
 the cap is possible; bypassed requests and a failed cleanup leave entries above
-the cap until the key expires. A silent Redis holds a request for up to
-about 4 s ([platform](platform.md#behavior), rule 7). One Redis only.
+the cap until the key expires. One Redis only.
 
 [P2]: ../PITFALLS.md#p2-putting-the-used-count-in-x-count
 [P3]: ../PITFALLS.md#p3-a-status-threshold-that-only-works-for-round-limits
@@ -185,3 +167,4 @@ about 4 s ([platform](platform.md#behavior), rule 7). One Redis only.
 [P12]: ../PITFALLS.md#p12-a-temporary-suspension-that-never-ends
 [P24]: ../PITFALLS.md#p24-tests-that-do-not-exercise-what-runs
 [P25]: ../PITFALLS.md#p25-time-tests-that-do-not-control-time
+[P28]: ../PITFALLS.md#p28-a-broken-key-reported-as-an-outage
