@@ -264,7 +264,12 @@ password. Users cannot be removed or change tokens; Redis memory bounds the
 registry, and a registry lost with Redis data is seeded again without its
 usage. Replication and failover are not covered. Untested: the wait on
 SIGTERM, the seed command's two 3 s silences, the connection log. Compose
-runs one API container on one host: a demo, not a deployment.
+runs one API container on one host: a demo, not a deployment. It starts the
+API with the public tokens of `.env.example`, and nothing refuses them outside
+development, so that `docker compose up` alone gives a working demo; only the
+loopback bindings keep it local. There is no CI: every result in
+[the verification record](../VERIFICATION.md) comes from a run by hand on one
+machine.
 
 [req]: ../REQUIREMENTS.md
 [env]: ../../.env.example

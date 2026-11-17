@@ -13,6 +13,8 @@ How this project is specified, and where each kind of fact is defined.
 | 5 | `VERIFICATION.md` | What was shown to work: dated results and what was not checked. |
 
 The [README](../README.md) is the entry point: overview and commands.
+[NOT-DOING.md](NOT-DOING.md) gathers what the project leaves out on purpose;
+each of its rows links to the decision or limit that defines it.
 
 ## One definition per fact
 

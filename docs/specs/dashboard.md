@@ -213,7 +213,9 @@ Vitest in jsdom (`npm test -w apps/web`), paths under `apps/web/src/`:
 
 ## Limits
 
-jsdom is not a browser: layout and real focus are unproven. Every keystroke in
+jsdom is not a browser: layout and real focus are unproven. Only a user's first
+rejection in a window sends an event, so a blocked user's Last Request and
+history change at the next snapshot, not live. Every keystroke in
 the search field asks for a new page, without a pause, so the server scans the
 registry once per keystroke. The token is a shared demo credential any script of
 the page can read.

@@ -158,6 +158,17 @@ the user is off the page. Alternative: render the detail panel from the detail
 response alone, which splits one user's state in two places. Cost: one more case
 in the ordering rule.
 
+### Every dashboard receives every event
+
+Rule 5 sends each event to every admin socket. Rooms or per-user subscriptions
+would send a dashboard only what it shows, but each dashboard would subscribe
+again whenever its page, filters or selected user change, and a change sent
+between two subscriptions would need a repair of its own. Every dashboard is an
+admin, so no event needs to be withheld from one. Alternative: rooms per page
+or per selected user. Cost: delivery grows with all users' requests times open
+dashboards, unmeasured; paging bounds what a dashboard holds, not what it
+receives.
+
 ### Socket.IO Redis adapter
 
 A dashboard connected to one API process must see the decisions of another

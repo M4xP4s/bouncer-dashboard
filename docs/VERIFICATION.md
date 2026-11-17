@@ -192,7 +192,7 @@ Files are named without their directory: `*.spec.ts` under `apps/api/src`, `*.e2
 | Submission: `package.json` with dependencies and scripts                       | `npm ci`, `npm run build`, `npm run lint`, `npm test` from a fresh checkout                                                                                                               |                                                                                     |
 | Submission: a ZIP file or a link to a GitHub repository                        | This repository                                                                                                                                                                           | Sending it is the owner's step and is not claimed here                              |
 | Submission: commented code and good practices                                  | [Coding rules](CODING-RULES.md), enforced in part by lint                                                                                                                                 | A judgement for the reviewer; no test shows it                                      |
-| Expectation: every significant decision backed by reasoning and trade-offs     | [Decisions](../README.md#decisions) in the README, which links the 23 decisions of the five specifications, each with its alternatives and cost                                           | Whether the reasoning convinces is the reviewer's judgement                         |
+| Expectation: every significant decision backed by reasoning and trade-offs     | [Decisions](../README.md#decisions) in the README, which links the 25 decisions of the five specifications, each with its alternatives and cost                                           | Whether the reasoning convinces is the reviewer's judgement                         |
 | Expectation: engineering thought process                                       | The specification-first trail: a specification commit before the code in each pull request, the test plans, the review fixes in the history, and this record                              | A judgement for the reviewer                                                        |
 | Expectation: architecture                                                      | The decisions of the five specifications; the build; I; 2P                                                                                                                                |                                                                                     |
 | Expectation: scalability                                                       | 2P; P; `registry.e2e-spec.ts` (I)                                                                                                                                                         | Two processes and 10000 users on one machine; filters and analytics read every user |
@@ -207,8 +207,11 @@ Files are named without their directory: `*.spec.ts` under `apps/api/src`, `*.e2
 Each item of [the pitfalls](PITFALLS.md) was checked against the code at
 `cddeba2`: its guard was found, the fault was looked for, and where a small
 edit could remove the guard, the edit was made and the item's check was run.
-None of the 33 faults was found. Two defects that the list did not name were
-found and fixed:
+None of the 33 faults was found. P6 and P9 hold as their guards are worded and
+no further: a rejection still costs two transactions, and requests during a
+suspension grow the window's set until its key expires
+([rate limiting](specs/rate-limiting.md#limits)). Two defects that the list
+did not name were found and fixed:
 
 - The dashboard dropped a `rate:limit_exceeded` alert when a snapshot holding
   the same version of the row arrived before the event (pull request #19).

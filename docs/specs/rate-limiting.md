@@ -78,10 +78,23 @@ then fails) alone use `RateLimitInterceptor` (Backend 2), after the
 Backend 5 asks that no request slip through, so the decision rests on a position
 the write itself claims: one `MULTI`/`EXEC` adds a unique ID to the window set,
 then reads the count, which includes the request, and the policy. A store-side
-script decides in one trip but moves the logic away from the mocked tests;
-`INCR` plus `EXPIRE` can leave a key without expiry ([P5]). Cost: a second
+script decides in one trip and writes only what it admits, but it puts the
+decision in a second language, Lua, outside the TypeScript of the rest of the
+repository, and the mock library cannot run it, so the required mocked tests
+would no longer reach the decision; the owner chose to keep the decision in
+TypeScript. `INCR` plus `EXPIRE` can leave a key without expiry ([P5]); a
+counter decremented after a rejection can subtract another request's unit once
+a reset lands in between, where removing a unique ID cannot. Cost: a second
 transaction, for bookkeeping; rejected and bypassed entries stay until removed
 or expired.
+
+### Written here, not taken from a limiter library
+
+Nest's throttler is a guard keyed by address and route, with no reset, grant or
+suspension. `rate-limiter-flexible` charges rejected attempts too, so after a
+run of rejections a grant of ten extra requests would not admit ten (rule 3).
+Neither keeps the row the dashboard shows. Cost: the window, its keys and their
+tests are code of this repository.
 
 ### Fixed hour
 
