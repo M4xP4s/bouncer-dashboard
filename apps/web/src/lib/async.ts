@@ -1,6 +1,7 @@
 /**
  * Wraps `task` so that it runs one at a time. Calls made while it runs merge
- * into a single follow-up run.
+ * into a single follow-up run. The returned promise is dropped, so the task
+ * must handle its own failures and not reject.
  */
 export function oneAtATime(task: () => Promise<void>): () => void {
   let running = false;
