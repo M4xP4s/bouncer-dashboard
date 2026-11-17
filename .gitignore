@@ -1,0 +1,9 @@
+# Local settings, dependencies and generated output stay out of version control.
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
