@@ -96,6 +96,7 @@ and that long a stale row for changes no event carries. Cases: browser tests.
 | Browser environment (`npm test`) | Cases |
 | --- | --- |
 | `apps/web/src/live/rows.test.ts`, `apps/web/src/live/useLiveUsers.test.tsx` | Order by window, then version; only a snapshot replaces an equal row; each snapshot trigger; one in flight, one merged follow-up; a newer event beats a slow snapshot; a failed snapshot keeps the rows; a stale alert is dropped; cleanup. |
+| `apps/web/src/App.test.tsx`, `apps/web/src/assembled.test.tsx` | Connecting sets no update time; an event or a snapshot moves it. |
 
 ## Milestone
 

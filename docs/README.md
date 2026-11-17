@@ -116,7 +116,7 @@ Specifications are listed here as they are introduced.
 | [Rate limiting](specs/rate-limiting.md) | UTC windows, atomic admission, quota headers and errors. |
 | [Live updates](specs/live-updates.md) | Authenticated socket events, versioning and alert suppression. |
 | [Admin API](specs/admin-api.md) | Authenticated actions, snapshots, activity history and analytics. |
-| [Dashboard](specs/dashboard.md) | The admin page: session, checked API client, live user state and fixture mode. |
+| [Dashboard](specs/dashboard.md) | The admin page: session, checked API client, live user state, fixture mode, the table with search and filters, user detail and history, admin controls and analytics cards. |
 
 ### Quality navigation
 
