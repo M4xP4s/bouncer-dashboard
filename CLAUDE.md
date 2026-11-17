@@ -34,9 +34,10 @@ kind of fact is written.
 - Treat the base requirements as fixed text. Where a requirement is
   ambiguous, state the chosen reading as an interpretation in the
   specification instead of editing the requirement.
-- Each fact has one home, listed in
-  [the documentation map](docs/README.md#one-home-per-fact). Link to it; do
-  not restate it in another document or a comment.
+- Each fact has one authoritative definition, listed in
+  [the documentation map](docs/README.md#one-definition-per-fact). Mention,
+  summarize or link to it elsewhere; do not define it a second time or
+  contradict it.
 - Do not claim scalability, production readiness or a passing check without
   evidence produced from this repository. State what was not verified.
 - Prefer the smallest complete solution. Add a service or dependency only for
