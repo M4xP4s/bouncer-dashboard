@@ -9,6 +9,7 @@ import {
   HISTORY_MAX_RECORDS,
   HISTORY_TTL_SECONDS,
   keys,
+  MINUTE_MS,
   minuteInWindow,
   statField,
   userFields,
@@ -128,6 +129,73 @@ export class RateLimitStore {
     });
     // For a rejection, SET NX is the last command; OK means we claimed the flag.
     return denied && replies.at(-1) === 'OK';
+  }
+
+  async reset(userId: string, now: number): Promise<UserRow> {
+    return this.adminAction(userId, now, (multi) => {
+      multi
+        .del(keys.window(userId, now))
+        .del(keys.extra(userId, now))
+        .hSet(keys.user(userId), userFields.lastManualResetAt, `${now}`)
+        .hIncrBy(keys.user(userId), userFields.generation, 1);
+    });
+  }
+
+  async setLimit(userId: string, now: number, limit: number): Promise<UserRow> {
+    return this.adminAction(userId, now, (multi) => {
+      // Every successful save re-arms, including decreases and same values.
+      multi
+        .set(keys.limit(userId), `${limit}`)
+        .hIncrBy(keys.user(userId), userFields.generation, 1);
+    });
+  }
+
+  async suspend(
+    userId: string,
+    now: number,
+    minutes: number,
+  ): Promise<UserRow> {
+    const suspendedUntilMs = now + minutes * MINUTE_MS;
+    return this.adminAction(userId, now, (multi) => {
+      multi.set(keys.suspend(userId), `${suspendedUntilMs}`, {
+        expiration: { type: 'PXAT', value: suspendedUntilMs },
+      });
+    });
+  }
+
+  async unsuspend(userId: string, now: number): Promise<UserRow> {
+    return this.adminAction(userId, now, (multi) => {
+      multi.del(keys.suspend(userId));
+    });
+  }
+
+  async addExtra(
+    userId: string,
+    now: number,
+    amount: number,
+  ): Promise<UserRow> {
+    return this.adminAction(userId, now, (multi) => {
+      // Usage is never initialized here: a concurrent admission may own it.
+      multi
+        .incrBy(keys.extra(userId, now), amount)
+        .pExpireAt(keys.extra(userId, now), windowExpiry(now))
+        .hIncrBy(keys.user(userId), userFields.generation, 1);
+    });
+  }
+
+  /** A row and its version are read after the action, in the same transaction. */
+  private async adminAction(
+    userId: string,
+    now: number,
+    write: (multi: ReturnType<typeof this.redis.multi<'typed'>>) => void,
+  ): Promise<UserRow> {
+    const replies = await this.transaction((multi) => {
+      write(multi);
+      multi.hIncrBy(keys.user(userId), userFields.version, 1);
+      this.appendRowRead(multi, userId, now);
+    });
+    // appendRowRead fixes the shape of the trailing replies.
+    return buildRow(userId, replies.slice(-ROW_REPLY_COUNT) as RowReplies, now);
   }
 
   /** One command order for every row, paired with RowReplies and buildRow. */
