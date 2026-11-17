@@ -112,9 +112,9 @@ Specifications are listed here as they are introduced.
 
 | Specification | Covers |
 | --- | --- |
-| [Platform](specs/platform.md) | The workspace, start-up configuration, who a caller is, the Redis connection and the error response. |
+| [Platform](specs/platform.md) | The workspace, start-up configuration, who a caller is, the Redis connection, the health route and the error response. |
 | [Rate limiting](specs/rate-limiting.md) | UTC windows, atomic admission, quota headers and errors. |
-| [Live updates](specs/live-updates.md) | Authenticated socket events, versioning and alert suppression. |
+| [Live updates](specs/live-updates.md) | Authenticated socket events, versioning, alert suppression and delivery across API processes. |
 | [Admin API](specs/admin-api.md) | Authenticated actions, snapshots, activity history and analytics. |
 | [Dashboard](specs/dashboard.md) | The admin page: session, checked API client, live user state, fixture mode, the table with search and filters, user detail and history, admin controls and analytics cards. |
 

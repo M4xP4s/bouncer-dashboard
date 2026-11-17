@@ -108,8 +108,8 @@ Mocked store (`vitest-mock-extended`), no Redis, in `apps/api/src/`:
   window key; expiry.
 
 Real store, in `apps/api/test/`, started with the whole application (the
-command is in the [README](../../README.md#commands); the suite empties the
-database it uses):
+command, and the Redis server of its own that the suite needs, are in the
+[README](../../README.md#commands); the suite empties the database it uses):
 - `admission.e2e-spec.ts`: `x-count` 99 down to 0, then the 429; the quota
   changes exactly at the UTC hour ([P25]); one user's exhaustion leaves
   another's quota; a failing handler still counts; a 401 and a spoofed ID
@@ -125,6 +125,13 @@ database it uses):
 - `expiry.e2e-spec.ts`: every key written has the expiry of its rule ([P9]);
   a suspension and an hour that end while idle change the snapshot at the
   same version; a record leaves the detail at exactly 24 h.
+
+Two API processes on one Redis, in `scripts/two-process-check.mjs`
+(`npm run check:two-process` after a build, on the Redis server of the
+real-store suite, whose database it empties): one request through each
+process uses one quota (99, then 98 remaining); 200 concurrent requests
+spread over both admit exactly 100, with each `x-count` from 0 to 99 once,
+and the window holds 100 entries.
 
 ## Milestone
 
