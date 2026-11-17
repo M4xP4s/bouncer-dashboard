@@ -6,13 +6,10 @@ A per-user API rate limiter built as a NestJS interceptor, with a live React and
 
 ## How this repository is built
 
-The project was developed in a private repository, specification first, with AI assistants. It is replayed here as a sequence of pull requests so that the order of work can be reviewed:
+The project is built specification first, as a sequence of pull requests:
 
 - Each pull request follows the [specification-first process](docs/README.md#specifications).
 - The base requirements come first. Improvements are added on top of them afterwards.
-- Commit dates are those of the replay, not of the original development.
-
-The replay is in progress; the merged pull requests show how far it has come.
 
 ## Commands
 
