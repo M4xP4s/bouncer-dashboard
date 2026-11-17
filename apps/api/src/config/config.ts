@@ -32,6 +32,35 @@ const USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
 // `:` or `,`, which are the separators inside DEMO_USERS.
 const TOKEN = /^[A-Za-z0-9._~+/=-]+$/;
 
+/** A redis:// or rediss:// URL with a host and, if given, a whole-number database. */
+function isRedisUrl(value: string): boolean {
+  if (!URL.canParse(value)) return false;
+  const { protocol, hostname, pathname } = new URL(value);
+  return (
+    ['redis:', 'rediss:'].includes(protocol) &&
+    hostname !== '' &&
+    /^\/?\d*$/.test(pathname)
+  );
+}
+
+/** Why a DEMO_USERS entry cannot be added, or undefined when it can. */
+function demoUserProblem(
+  entry: string,
+  userIds: ReadonlySet<string>,
+  userIdByToken: ReadonlyMap<string, string>,
+  adminToken: string,
+): string | undefined {
+  const parts = entry.split(':');
+  const [userId, token] = parts;
+  if (parts.length !== 2 || !USER_ID.test(userId) || !TOKEN.test(token)) {
+    return 'must be userId:token';
+  }
+  if (userIds.has(userId)) return 'repeats a user ID';
+  // A user token equal to the admin token would make that user an admin.
+  if (userIdByToken.has(token) || token === adminToken) return 'reuses a token';
+  return undefined;
+}
+
 /**
  * Builds the configuration or throws one error that lists every problem.
  *
@@ -39,9 +68,7 @@ const TOKEN = /^[A-Za-z0-9._~+/=-]+$/;
  * repeat a value: tokens and a Redis URL with a password must not end up in
  * a log.
  */
-export function loadConfig(
-  env: Record<string, string | undefined>,
-): AppConfig {
+export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   const problems: string[] = [];
 
   const port = Number(env.PORT);
@@ -50,10 +77,7 @@ export function loadConfig(
   }
 
   const redisUrl = env.REDIS_URL ?? '';
-  if (
-    !URL.canParse(redisUrl) ||
-    !['redis:', 'rediss:'].includes(new URL(redisUrl).protocol)
-  ) {
+  if (!isRedisUrl(redisUrl)) {
     problems.push('REDIS_URL must be a redis:// or rediss:// URL');
   }
 
@@ -69,21 +93,14 @@ export function loadConfig(
     problems.push('DEMO_USERS must list at least one userId:token pair');
   }
   entries.forEach((entry, index) => {
-    const where = `DEMO_USERS entry ${index + 1}`;
-    const parts = entry.split(':');
-    const [userId, token] = parts;
-    if (parts.length !== 2 || !USER_ID.test(userId) || !TOKEN.test(token)) {
-      problems.push(`${where} must be userId:token`);
-    } else if (userIds.has(userId)) {
-      problems.push(`${where} repeats a user ID`);
-    } else if (userIdByToken.has(token) || token === adminToken) {
-      // Two users with one token would be one identity, and a user token
-      // equal to the admin token would make every such user an admin.
-      problems.push(`${where} reuses a token`);
-    } else {
-      userIds.add(userId);
-      userIdByToken.set(token, userId);
+    const [userId, token] = entry.split(':');
+    const problem = demoUserProblem(entry, userIds, userIdByToken, adminToken);
+    if (problem) {
+      problems.push(`DEMO_USERS entry ${index + 1} ${problem}`);
+      return;
     }
+    userIds.add(userId);
+    userIdByToken.set(token, userId);
   });
 
   if (problems.length > 0) {

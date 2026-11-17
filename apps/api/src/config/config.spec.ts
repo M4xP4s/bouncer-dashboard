@@ -24,6 +24,10 @@ describe('loadConfig', () => {
     ['PORT', '3000abc'],
     ['REDIS_URL', 'http://localhost:6379'],
     ['REDIS_URL', 'localhost'],
+    ['REDIS_URL', 'redis:localhost'],
+    ['REDIS_URL', 'redis://'],
+    ['REDIS_URL', 'redis://localhost:6379/not-a-number'],
+    ['REDIS_URL', 'redis://localhost:6379/-1'],
     ['ADMIN_TOKEN', 'has space'],
   ])('refuses %s=%s', (name, value) => {
     expect(() => loadConfig({ ...valid, [name]: value })).toThrow(name);
