@@ -13,6 +13,7 @@ import type { Session } from '../../api/useSession.ts';
 import type { LiveUsers } from '../../live/useLiveUsers.ts';
 import { useRequest } from '../../lib/useRequest.ts';
 import { utcTime } from '../../lib/time.ts';
+import { AdminForms } from '../admin/AdminForms.tsx';
 import { mergeRequests } from './mergeRequests.ts';
 
 export function UserDrawer({
@@ -182,6 +183,7 @@ function DetailContent({
           </Table>
         )}
       </section>
+      <AdminForms userId={userId} session={session} live={live} />
     </>
   );
 }
