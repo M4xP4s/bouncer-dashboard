@@ -90,19 +90,25 @@ and the registry keys of [platform](platform.md#interface).
 
 ## Decisions
 
-**Admin writes and admission.** Asked: concurrency-proof limiting (Backend 5)
+### Admin writes and admission
+
+Asked: concurrency-proof limiting (Backend 5)
 with controls acting mid-window. Each action is one `MULTI`/`EXEC` transaction
 on admission's instance, ending in a version increment and a row read, so the
 returned row reflects the action at its place in that order. `WATCH` with
 retry costs round trips, a lock can outlive its holder, scripts add a language.
 Cost: the write queues the row read as well as the mutation.
 
-**Usage, limit and grant apart.** These values follow different lifetimes.
+### Usage, limit and grant apart
+
+These values follow different lifetimes.
 Admission and admin reads use the same keys and row builder. A single counter
 could preserve an expired grant or erase usage when a limit changes ([P13]).
 Cost: five commands per row read.
 
-**Numbered pages, filtered by reading in batches.** Asked: a live table with
+### Numbered pages, filtered by reading in batches
+
+Asked: a live table with
 search and filters (Core features 1, 4) for a population that should scale.
 Sending every row grows each response and each dashboard's memory with the
 population, so the server cuts a page. Status and last activity change with

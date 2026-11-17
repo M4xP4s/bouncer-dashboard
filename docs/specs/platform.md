@@ -116,13 +116,17 @@ flowchart LR
 
 ## Decisions
 
-**Identity comes from a credential.** The brief wants a quota "based on user
+### Identity comes from a credential
+
+The brief wants a quota "based on user
 id" but gives no way to know the caller, and a client-sent ID lets one user
 drain another's quota. A guard maps a registered bearer token to the ID; an
 identity provider, which the brief does not ask for, would replace only that
 lookup. Cost: the demo tokens are public. Cases: the guard spec.
 
-**Users are registered in Redis, not configured.** The expectations ask for
+### Users are registered in Redis, not configured
+
+The expectations ask for
 a solution that scales, and thousands of users do not fit in an environment
 variable that every process must repeat. Redis already holds the quota, so
 three keys add a registry without another service. Only registration uses
@@ -133,14 +137,18 @@ as digests so that a copy of Redis gives no credentials away. Cost: one more
 Redis read per authenticated request, and a Redis outage now also fails
 authentication, with 503. Cases: the guard spec, the registry cases.
 
-**One types-only package carries the shared contract.** The dashboard and API
+### One types-only package carries the shared contract
+
+The dashboard and API
 must agree on every payload, and copies drift. Both import `@app/contracts`,
 which holds types only because the server computes the status. Alternative:
 Nest's monorepo mode, which restructures the repository around its CLI for a
 dashboard that is not a Nest project. Cost: no build step, so a toolchain
 that cannot read the package would force one. Cases: the build.
 
-**Configuration is checked once, before listening.** A misconfigured service
+### Configuration is checked once, before listening
+
+A misconfigured service
 should refuse to start, not fail request by request. `loadConfig`, a pure
 function of the environment, runs while Nest builds the application, so
 `NestFactory.create` fails before anything listens. Alternatives:
@@ -148,14 +156,18 @@ function of the environment, runs while Nest builds the application, so
 it is used ([P10]). Cost: a change needs a restart. Cases: the config spec,
 the milestone.
 
-**One filter gives every error one shape.** A client should not parse a body
+### One filter gives every error one shape
+
+A client should not parse a body
 per source: Nest's differ between an exception, a middleware error and a list
 of validation messages, and a defect's text could leak. A global filter
 rebuilds each as `statusCode`, `error` and `message`. Alternative: the
 default handling, route by route. Cost: the filter must follow Nest's own
 classification of errors. Cases: the filter spec; the 404 step.
 
-**One Redis client fails fast at start, then retries.** The API is useless
+### One Redis client fails fast at start, then retries
+
+The API is useless
 without Redis but should survive its restart. The client connects while the
 application is built, with 1 s for the TCP connection. A socket silent for
 3 s is closed, which covers a peer that accepts and never answers; a `PING`
@@ -167,7 +179,9 @@ this is a limit on silence, not on the total time to start, so a peer that
 keeps sending an unfinished reply is not cut off. Cases: the Redis module
 spec; the milestone.
 
-**A watchdog closes a connection that has stopped answering.** A request must
+### A watchdog closes a connection that has stopped answering
+
+A request must
 not wait without limit on a hung store. The socket timeout cannot see one
 under traffic: it measures inactivity in both directions, so every command
 written restarts it. The reply to the once-a-second `PING` is therefore the
@@ -182,7 +196,9 @@ like a hung one, so no blocking command may use this client; and a write that
 was cut off may or may not have been applied. Cases: the Redis module spec;
 the outage cases.
 
-**The API serves the dashboard.** A page on another origin needs CORS on the
+### The API serves the dashboard
+
+A page on another origin needs CORS on the
 API and on the socket handshake, and a second server to run. Served by the
 API, the page uses relative URLs in every mode: in development Vite forwards
 `/api` and `/socket.io` to the API. Alternatives: a static host or a reverse

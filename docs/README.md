@@ -101,7 +101,7 @@ stable document that grows as the capability does.
 | Scope | What the capability covers, and which requirement items or expectations it answers. |
 | Behavior | Numbered rules, each one testable. A rule that settles an ambiguity in the brief is marked **Interpretation** and quotes the ambiguous words. |
 | Interface | Routes, events and storage keys. Payloads are named by type and not redefined. |
-| Decisions | Each significant choice, in a few sentences: what was asked, what follows from it, the mechanism chosen, the alternatives and their cost, and which test-plan cases are meant to show it. |
+| Decisions | Each significant choice under a heading of its own, so that it can be linked, in a few sentences: what was asked, what follows from it, the mechanism chosen, the alternatives and their cost, and which test-plan cases are meant to show it. |
 | Test plan | The cases to write and where each runs: against a mocked store, a real store or a browser environment. |
 | Milestone | How to see that the capability works: the commands to run and their expected result, and for anything visible the steps in the browser and what appears. Written so that a person or an agent can follow it literally. |
 | Limits | What this capability does not do and does not prove. |

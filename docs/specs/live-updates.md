@@ -93,12 +93,16 @@ named with the prefix `socket.io` (rule 12).
 
 ## Decisions
 
-**Full row, with a version.** Events that only name a user force a read each,
+### Full row, with a version
+
+Events that only name a user force a read each,
 overtaken under steady traffic ([P18]). The event carries the row and a counter
 from one transaction, so the store orders concurrent changes; a timestamp would
 depend on host clocks. Cost: larger messages. Cases: mocked-store specs.
 
-**One alert per window, re-armed by a generation.** A blocked client retries at
+### One alert per window, re-armed by a generation
+
+A blocked client retries at
 once, so an alert per 429 multiplies work. The once-per-window flag is keyed by
 a generation, read with the admission's decision and incremented by reset, extra
 and limit saves. Deleting the flag instead lets a rejection decided before the
@@ -106,7 +110,9 @@ action set it again; re-arming only on a raised limit needs a read and a retry.
 Cost: lowering a limit can alert again that hour. Cases: interceptor and store
 specs.
 
-**Window, then version; snapshots repair.** Arrival order does not say which row
+### Window, then version; snapshots repair
+
+Arrival order does not say which row
 is newer, and a new hour changes a row with no event, so the window comes first.
 Only a snapshot, read with its version in one transaction, may replace an equal
 row. Last arrival wins undoes a newer event; cancelling a snapshot can starve
@@ -117,7 +123,9 @@ the 100 kept while a new page is read shows the page's row until their next
 event or the next snapshot; reading again would let events cause reads.
 Cases: browser tests.
 
-**The selected user's detail repairs it off the page.** With pages, the
+### The selected user's detail repairs it off the page
+
+With pages, the
 selected user may be on no page the dashboard reads, so no snapshot would ever
 repair an ended suspension or a removed rejected entry for that user; before
 pages, every user was in the snapshot. The detail response is read with its
@@ -126,7 +134,9 @@ for that user only while the user is off the page. Alternative: render the
 detail panel from the detail response alone, which splits one user's state in
 two places. Cost: one more case in the ordering rule.
 
-**Socket.IO Redis adapter.** A dashboard connected to one API process must see
+### Socket.IO Redis adapter
+
+A dashboard connected to one API process must see
 the decisions of another ([P20]). The adapter publishes every emit on Redis and
 each process delivers it to its own sockets. It does not await its Redis
 commands, so with Redis down an emit would become an unhandled rejection, which
