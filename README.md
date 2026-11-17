@@ -204,9 +204,9 @@ The last full run, on one laptop, at the revision the record names:
 
 | Check                                             | Result                                                                                                                                                                  |
 | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm test`                                        | 293 API tests in 16 files and 126 dashboard tests in 14 files passed                                                                                                    |
+| `npm test`                                        | 295 API tests in 16 files and 127 dashboard tests in 14 files passed                                                                                                    |
 | `npm run check:contracts`                         | 134 fixture checks passed                                                                                                                                               |
-| `npm run test:integration`                        | 72 tests in 14 files passed against a real Redis, five runs in a row                                                                                                    |
+| `npm run test:integration`                        | 74 tests in 14 files passed against a real Redis, five runs in a row                                                                                                    |
 | `npm run check:two-process`                       | 200 requests at once for one user over two API processes: 100 admitted, 100 rejected, 0 other; three runs                                                               |
 | `npm run check:population`                        | The list page, a filtered page and the analytics timed at 1000 and 10000 registered users; three runs                                                                   |
 | `docker compose up --build --wait`, then Chromium | Both containers healthy. Of 14 browser items, 12 passed; the hidden tab was not checked, and the console held one unexplained WebSocket warning after a refused sign-in |
@@ -216,7 +216,7 @@ xychart-beta
     title "Tests passed, by suite"
     x-axis ["API", "Dashboard", "Integration"]
     y-axis "Tests" 0 --> 300
-    bar [293, 126, 72]
+    bar [295, 127, 74]
 ```
 
 ```mermaid

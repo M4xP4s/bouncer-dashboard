@@ -18,8 +18,8 @@ specification that owns the topic; where it rests on a reading of an
 ambiguous requirement, that reading is marked as an interpretation there,
 not here. The **Check** line gives a short example of a case and where it
 runs. The specification's test plan holds the full list, and
-`VERIFICATION.md` records what was run and with what result. Both are linked
-from here as they are written.
+[`VERIFICATION.md`](VERIFICATION.md#pitfalls) records what was run and with
+what result.
 
 The first rule covers every item: where the brief is clear it is
 implemented as written, and where it is ambiguous the chosen reading is
@@ -517,8 +517,9 @@ type, then reaches the client as a 503 that invites a retry, although every
 retry fails the same way. This is P8 one layer lower: the catch is narrow,
 but what it catches is not.
 
-**Guard:** an error reply from the store is a defect: it is logged and
-becomes a 500. Only a lost or timed-out connection becomes a 503.
+**Guard:** in the quota and admin store calls, an error reply from Redis is
+a defect: it is logged and becomes a 500. A connection known to be down, or
+any other rejection while a command runs, becomes a 503.
 **Check:** mocked store: an error reply inside the transaction gives 500,
 and a lost connection gives 503. Real store: a key of the wrong type on the
 admission path gives 500.
@@ -533,9 +534,9 @@ never registers it. The same blindness affects a verification script: a
 two-process check that still passes with the cross-process wiring removed
 shows nothing about that wiring.
 
-**Guard:** each registration point is exercised through the assembled
-application, and every check that claims to prove some wiring has been seen
-to fail with that wiring removed.
+**Guard:** a registration is exercised through the assembled application,
+and a check that claims to prove some wiring must fail when that wiring is
+removed.
 **Check:** an error raised in a route reaches the client in the filter's
 envelope; with the adapter not registered, the two-process check reports a
 missing event at one of the dashboards.
@@ -595,5 +596,6 @@ readable contrast.
 **Guard:** filled badges and buttons choose black or white text by the
 fill's luminance at the point where both give the same contrast, so every
 fill exceeds 4.5:1, and the status is also written as a word.
-**Check:** browser environment: the rendered colours of each status badge,
+**Check:** in a real browser, the rendered colours of each status badge,
 the connection state and dimmed text are measured, not the theme's values.
+No automated test does this; it is done by hand and recorded.

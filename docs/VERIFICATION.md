@@ -6,15 +6,15 @@ results only. A check that is not listed here was not run.
 
 ## Revision and environment
 
-|              |                                                                                                                                                  |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Revision     | Tree `6c0cf6ef3ab2a196f1099a594fa1229774af135a`, which is `main` at commit `8581c61` (pull request #16). Later commits change documentation only |
-| Date         | 2026-11-17                                                                                                                                       |
-| Machine      | One laptop: Apple M3 Pro, 18 GB memory, macOS 26.2                                                                                               |
-| Node.js, npm | 26.5.0, 11.17.0                                                                                                                                  |
-| Docker       | 29.8.2                                                                                                                                           |
-| Redis        | 8.10.3 (`redis:8-alpine`), one instance in Docker, used by nothing else during the runs                                                          |
-| Browser      | Chromium 151.0.7922.34 driven by Playwright, headless, 1440 by 900 pixels                                                                        |
+|              |                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Revision     | Tree `ca53c5b800efeffb5527152b8313ad09e7baf5f3`, which is `main` at commit `bf206fb` (pull request #20), for the first six commands below. The population check, the Compose start, the pause timing and the browser pass are from tree `6c0cf6ef3ab2a196f1099a594fa1229774af135a`, `main` at `8581c61` (pull request #16); since then the application source changed in two files, `apps/web/src/live/liveSession.ts` and `apps/api/src/users/seed-users.ts` |
+| Date         | 2026-11-17                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Machine      | One laptop: Apple M3 Pro, 18 GB memory, macOS 26.2                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Node.js, npm | 26.5.0, 11.17.0                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Docker       | 29.8.2                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Redis        | 8.10.3 (`redis:8-alpine`), one instance in Docker, used by nothing else during the runs                                                                                                                                                                                                                                                                                                                                                                       |
+| Browser      | Chromium 151.0.7922.34 driven by Playwright, headless, 1440 by 900 pixels                                                                                                                                                                                                                                                                                                                                                                                     |
 
 ## Automated checks
 
@@ -23,19 +23,19 @@ after `npm ci`, run one after another on a Redis server of their own. That
 server listened on another free port than the README's 6380; nothing else
 differed.
 
-| Command                            | What it runs                                                                                                                                                                                           | Result                                                                                                               |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `npm run build`                    | The API and the dashboard build, each compiling the shared contract types it imports                                                                                                                   | Exit 0 in 7.0 s. Vite warns that the dashboard's JavaScript file is 966 kB (289 kB gzipped), above its 500 kB notice |
-| `npm run lint`                     | Type-aware lint of the API (explicit `any` is an error) and the dashboard                                                                                                                              | Exit 0 in 4.7 s, nothing reported                                                                                    |
-| `npm test`                         | API: unit tests with the store mocked, controller tests over HTTP and Redis-client tests against a local TCP peer. Dashboard: component and hook tests in jsdom with a mocked socket. No Redis server. | Exit 0 in 23.8 s. API: 293 tests in 16 files passed. Dashboard: 126 tests in 14 files passed                         |
-| `npm run check:contracts`          | The fixture data against the dashboard's own shape checks                                                                                                                                              | Exit 0, `fixtures consistent: 134 checks passed`                                                                     |
-| `npm run test:integration`         | The built application over HTTP and Socket.IO against a real Redis                                                                                                                                     | Five runs in a row, each exit 0: 72 tests in 14 files passed, none skipped, in 31.6 to 34.3 s                        |
-| `npm run check:two-process`        | Two API processes on one Redis: one quota, events and alerts relayed to each other's dashboards                                                                                                        | Three runs, each exit 0 in 3.9 to 4.7 s, with the output below and no API log line at error or warning level         |
-| `npm run check:population`         | One API with 1000 and then 10000 registered users: list, filter and analytics reads                                                                                                                    | Three runs, each exit 0 in 9.7 to 10.4 s; figures under [Reads by number of users](#reads-by-number-of-users)        |
-| `docker compose up --build --wait` | The image and Compose: both containers healthy                                                                                                                                                         | Exit 0 in 17.5 s, both services healthy; the application runs as the user `node`                                     |
+| Command                            | What it runs                                                                                                                                                                                           | Result                                                                                                                                                            |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run build`                    | The API and the dashboard build, each compiling the shared contract types it imports                                                                                                                   | Exit 0 in 7.0 s. Vite warns that the dashboard's JavaScript file is 966 kB (289 kB gzipped), above its 500 kB notice                                              |
+| `npm run lint`                     | Type-aware lint of the API (explicit `any` is an error) and the dashboard                                                                                                                              | Exit 0 in 4.4 s, nothing reported                                                                                                                                 |
+| `npm test`                         | API: unit tests with the store mocked, controller tests over HTTP and Redis-client tests against a local TCP peer. Dashboard: component and hook tests in jsdom with a mocked socket. No Redis server. | Exit 0 in 25.7 s. API: 295 tests in 16 files passed. Dashboard: 127 tests in 14 files passed                                                                      |
+| `npm run check:contracts`          | The fixture data against the dashboard's own shape checks                                                                                                                                              | Exit 0, `fixtures consistent: 134 checks passed`                                                                                                                  |
+| `npm run test:integration`         | The built application over HTTP and Socket.IO against a real Redis                                                                                                                                     | Five runs in a row, each exit 0: 74 tests in 14 files passed, none skipped, in 29.8 to 30.7 s                                                                     |
+| `npm run check:two-process`        | Two API processes on one Redis: one quota, events and alerts relayed to each other's dashboards                                                                                                        | Three runs, each exit 0 in 3.9 to 4.0 s, with the output below and no API log line at error or warning level; 30 more runs in a row on the same tree, each exit 0 |
+| `npm run check:population`         | One API with 1000 and then 10000 registered users: list, filter and analytics reads                                                                                                                    | Three runs, each exit 0 in 9.7 to 10.4 s; figures under [Reads by number of users](#reads-by-number-of-users)                                                     |
+| `docker compose up --build --wait` | The image and Compose: both containers healthy                                                                                                                                                         | Exit 0 in 17.5 s, both services healthy; the application runs as the user `node`                                                                                  |
 
 The integration runner prints totals and not one line per test. That a case
-named below passed is concluded from 72 of 72 tests passing in every run with
+named below passed is concluded from 74 of 74 tests passing in every run with
 none skipped.
 
 Every line `npm run check:two-process` printed, apart from the API processes'
@@ -201,6 +201,38 @@ Files are named without their directory: `*.spec.ts` under `apps/api/src`, `*.e2
 | Expectation: security                                                          | `config.spec.ts`, `user-token.guard.spec.ts`, `admin.controller.spec.ts` (T); `admin-http.e2e-spec.ts`, `registry.e2e-spec.ts`, `live-events.e2e-spec.ts` (I)                             | Demo tokens, no TLS                                                                 |
 | Expectation: maintainability                                                   | The shared contract package, lint, `npm run check:contracts`, the coding rules                                                                                                            | A judgement for the reviewer                                                        |
 | Expectation: ready for production                                              | Not shown                                                                                                                                                                                 | Demo credentials, one Redis without failover, no TLS, no load test                  |
+
+## Pitfalls
+
+Each item of [the pitfalls](PITFALLS.md) was checked against the code at
+`cddeba2`: its guard was found, the fault was looked for, and where a small
+edit could remove the guard, the edit was made and the item's check was run.
+None of the 33 faults was found. Two defects that the list did not name were
+found and fixed:
+
+- The dashboard dropped a `rate:limit_exceeded` alert when a snapshot holding
+  the same version of the row arrived before the event (pull request #19).
+  It was reproduced in the dashboard's tests, not against a running API.
+- Two API processes started together on an empty Redis could each refuse the
+  `DEMO_USERS` the other had just registered, and one stopped.
+  `npm run check:two-process` failed 5 times in 30 before the fix and 0 times
+  in 30 after it (pull request #20). The three passing runs recorded earlier
+  were too few to show it.
+
+Eight checks passed with their guard removed (P8, P9, P16, P18, P21, P25, P26
+and P28). Pull request #19 added an assertion to each, and each was seen to
+fail without the guard.
+
+What the checks do not show:
+
+- P5: only the mocked-store test notices an expiry set outside the
+  transaction.
+- P7: the latency case notices a lock held 50 ms for each request, not one
+  held 10 ms.
+- P22: two checks drop a late 401, and each hides the removal of the other.
+- P31 and P32 are rules for people; nothing automated enforces them.
+- P33: no automated check of contrast. Measured once by hand in Chromium, the
+  status badges had ratios of 6.39 to 11.28 against a minimum of 4.5.
 
 ## Not verified
 
