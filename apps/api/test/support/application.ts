@@ -7,6 +7,7 @@ import type {
   ServerToClientEvents,
   UserDetail,
   UserRow,
+  UsersPage,
 } from '@app/contracts';
 import { io, type Socket } from 'socket.io-client';
 import request, { type Response } from 'supertest';
@@ -18,6 +19,7 @@ import {
   REDIS,
   type RedisClient,
 } from '../../src/redis/redis.module.js';
+import { UserRegistry } from '../../src/users/user-registry.js';
 import { type Relay, throughRelay } from './relay.js';
 
 export const SECOND_MS = 1000;
@@ -29,6 +31,12 @@ export const DAY_MS = 24 * HOUR_MS;
 // a key the application has just written under the frozen one.
 export const TEST_NOW = Date.parse('2099-01-01T10:42:00.000Z');
 export const ADMIN_TOKEN = 'test-admin-token';
+/** The keys the registered DEMO_USERS leave in an otherwise empty Redis, sorted. */
+export const REGISTRY_KEY_NAMES = [
+  'rl:registry:ids',
+  'rl:registry:tokens',
+  'rl:registry:users',
+];
 
 export const windowStart = (now = Date.now()) =>
   Math.floor(now / HOUR_MS) * HOUR_MS;
@@ -128,8 +136,14 @@ export class TestApplication {
     );
   }
 
-  async snapshot() {
-    return bodyOf<UserRow[]>(await this.admin('get', '/users').expect(200));
+  async usersPage(query = '') {
+    const response = await this.admin('get', `/users?${query}`).expect(200);
+    expect(Array.isArray(response.body.rows)).toBe(true);
+    return bodyOf<UsersPage>(response);
+  }
+
+  async snapshot(): Promise<UserRow[]> {
+    return (await this.usersPage()).rows;
   }
 
   async snapshotRow(userId = 'user-01') {
@@ -152,6 +166,11 @@ export class TestApplication {
       socket.connect();
     });
     return socket;
+  }
+
+  /** Start-up registered DEMO_USERS; a test that empties Redis does it again. */
+  registerDemoUsers() {
+    return this.app.get(UserRegistry).importBootstrapUsers();
   }
 
   disconnectSockets() {
@@ -185,6 +204,7 @@ export function useFrozenApplication() {
   beforeEach(async () => {
     vi.setSystemTime(TEST_NOW);
     await application?.redis.flushDb();
+    await application?.registerDemoUsers();
   });
   afterEach(() => application?.disconnectSockets());
   afterAll(async () => {

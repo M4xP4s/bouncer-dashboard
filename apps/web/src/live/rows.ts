@@ -1,4 +1,4 @@
-import type { UserRow } from '@app/contracts';
+import type { UserRow, UsersPage } from '@app/contracts';
 
 /** The rows the dashboard holds, one per user. Never changed in place. */
 export type Rows = ReadonlyMap<string, UserRow>;
@@ -51,4 +51,10 @@ export function applySnapshot(rows: Rows, snapshot: UserRow[]): Rows {
 export function suspensionEnd(row: UserRow, now: number): string | null {
   const until = row.suspendedUntil;
   return until !== null && Date.parse(until) > now ? until : null;
+}
+
+/** The page's users in its order, each with the newest held row. */
+export function pageRows(page: UsersPage | null, rows: Rows): UserRow[] {
+  if (!page) return [];
+  return page.rows.map((row) => rows.get(row.userId) ?? row);
 }

@@ -115,7 +115,7 @@ describe('dashboard read models', () => {
     expect((await analyticsOf(api)).nearLimitPercent).toBe(60);
   });
 
-  it('ranks the top five users by usage only, whatever their IDs', async () => {
+  it('ranks the top five users by usage, equal usage by ID', async () => {
     const api = application();
     await api.admitInTurn(3, 'test-token-03');
     await api.admitInTurn(2, 'test-token-02');
@@ -126,7 +126,14 @@ describe('dashboard read models', () => {
     const { topUsers } = await analyticsOf(api);
 
     expect(topUsers.map((user) => user.used)).toEqual([3, 2, 2, 1, 1]);
-    expect(topUsers[0]?.userId).toBe('user-03');
+    // Plain string order of the ID, where `U` precedes `u`.
+    expect(topUsers.map((user) => user.userId)).toEqual([
+      'user-03',
+      'user-02',
+      'user-04',
+      'User_06-TEST',
+      'user-01',
+    ]);
   });
 
   it('includes the previous hour and zero-filled buckets in the hour and day histories', async () => {

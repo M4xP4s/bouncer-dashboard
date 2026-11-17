@@ -10,6 +10,7 @@ import type {
   UpdateCause,
   UserDetail,
   UserRow,
+  UsersPage,
 } from '@app/contracts';
 
 // Shape checks at the I/O boundary. They never derive quota or status.
@@ -23,7 +24,7 @@ const MAX_PERCENT = 100;
 const members = <T extends string>(all: Record<T, true>): readonly string[] =>
   Object.keys(all);
 
-export const STATUSES = members<Status>({
+const STATUSES = members<Status>({
   OK: true,
   Warning: true,
   Exceeded: true,
@@ -84,8 +85,26 @@ export function isUserRow(value: unknown): value is UserRow {
   );
 }
 
-export const isUsers = (value: unknown): value is UserRow[] =>
+const isUsers = (value: unknown): value is UserRow[] =>
   Array.isArray(value) && value.every(isUserRow);
+
+const isReadInterval = (value: Fields) =>
+  isTimestamp(value.startedAt) && isTimestamp(value.completedAt);
+
+const isPositiveCount = (value: unknown): value is number =>
+  isCount(value) && value >= 1;
+
+export function isUsersPage(value: unknown): value is UsersPage {
+  return (
+    isObject(value) &&
+    isReadInterval(value) &&
+    isUsers(value.rows) &&
+    isCount(value.total) &&
+    isPositiveCount(value.page) &&
+    isPositiveCount(value.pageSize) &&
+    value.rows.length <= value.pageSize
+  );
+}
 
 export function isRequestRecord(value: unknown): value is RequestRecord {
   return (
@@ -130,6 +149,7 @@ function isTopUser(value: unknown): value is TopUser {
 export function isAnalytics(value: unknown): value is Analytics {
   return (
     isObject(value) &&
+    isReadInterval(value) &&
     isCount(value.totalUsers) &&
     isCount(value.activeUsers) &&
     isCount(value.nearLimitPercent) &&

@@ -7,7 +7,6 @@ import request from 'supertest';
 import { SampleController } from './sample.controller.js';
 import { ApiErrorFilter } from '../api-error.filter.js';
 import { UserTokenGuard } from '../auth/user-token.guard.js';
-import { APP_CONFIG, loadConfig } from '../config/config.js';
 import { LiveGateway } from '../live/live.gateway.js';
 import { RateLimitInterceptor } from '../rate-limit/rate-limit.interceptor.js';
 import {
@@ -16,6 +15,7 @@ import {
   StoreUnavailable,
 } from '../rate-limit/rate-limit.store.js';
 import { buildRow } from '../rate-limit/row.js';
+import { UserRegistry } from '../users/user-registry.js';
 
 const now = Date.parse('2026-11-16T10:42:00.000Z');
 const admission: Admission = {
@@ -29,12 +29,15 @@ describe('sample HTTP', () => {
   let app: INestApplication;
   const store = mockDeep<RateLimitStore>();
   const live = mockDeep<LiveGateway>();
+  const registry = mockDeep<UserRegistry>();
 
   beforeEach(async () => {
     vi.useFakeTimers({ toFake: ['Date'], now });
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
     mockReset(store);
     mockReset(live);
+    mockReset(registry);
+    registry.identify.mockResolvedValue('user');
     store.admit.mockResolvedValue(admission);
     store.recordOutcome.mockResolvedValue(false);
     const module = await Test.createTestingModule({
@@ -45,15 +48,7 @@ describe('sample HTTP', () => {
         { provide: APP_FILTER, useClass: ApiErrorFilter },
         { provide: RateLimitStore, useValue: store },
         { provide: LiveGateway, useValue: live },
-        {
-          provide: APP_CONFIG,
-          useValue: loadConfig({
-            PORT: '3000',
-            REDIS_URL: 'redis://localhost:6379',
-            ADMIN_TOKEN: 'admin',
-            DEMO_USERS: 'user:token',
-          }),
-        },
+        { provide: UserRegistry, useValue: registry },
       ],
     }).compile();
     app = module.createNestApplication();

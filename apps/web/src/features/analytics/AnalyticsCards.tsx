@@ -1,6 +1,7 @@
 import { Alert, Card, SimpleGrid, Text, Title } from '@mantine/core';
 import type { Analytics } from '@app/contracts';
 import type { Session } from '../../api/useSession.ts';
+import { utcTime } from '../../lib/time.ts';
 import { useRequest } from '../../lib/useRequest.ts';
 
 export function AnalyticsCards({
@@ -21,6 +22,7 @@ export function AnalyticsCards({
       {error && (
         <Alert color="red">Could not load analytics: {error.message}</Alert>
       )}
+      {data && <Text size="xs">Updated {utcTime(data.completedAt)}</Text>}
       {data && <AnalyticsGrid analytics={data} />}
     </section>
   );
@@ -32,7 +34,7 @@ function AnalyticsGrid({ analytics }: { analytics: Analytics }) {
       <Card withBorder>
         <Title order={3}>Total users</Title>
         <Text>{analytics.totalUsers}</Text>
-        <Text size="xs">All seeded users</Text>
+        <Text size="xs">All registered users</Text>
       </Card>
       <Card withBorder>
         <Title order={3}>Near limit</Title>

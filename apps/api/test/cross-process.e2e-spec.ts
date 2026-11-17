@@ -33,6 +33,7 @@ describe('events between two applications on one Redis', () => {
     first = await TestApplication.start();
     second = await TestApplication.start();
     await first.redis.flushDb();
+    await first.registerDemoUsers();
   });
 
   afterAll(async () => {

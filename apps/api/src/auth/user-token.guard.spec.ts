@@ -1,19 +1,25 @@
 import { type ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { mockDeep } from 'vitest-mock-extended';
-import { loadConfig } from '../config/config.js';
+import { StoreUnavailable } from '../rate-limit/rate-limit.store.js';
+import { UserRegistry } from '../users/user-registry.js';
 import {
   type AuthenticatedRequest,
   UserTokenGuard,
 } from './user-token.guard.js';
 
-const guard = new UserTokenGuard(
-  loadConfig({
-    PORT: '3000',
-    REDIS_URL: 'redis://localhost:6379',
-    ADMIN_TOKEN: 'admin-token',
-    DEMO_USERS: 'user-01:token-01,user-02:token-02',
-  }),
-);
+const userIdByToken = new Map([
+  ['token-01', 'user-01'],
+  ['token-02', 'user-02'],
+]);
+const registry = mockDeep<UserRegistry>();
+const guard = new UserTokenGuard(registry);
+
+beforeEach(() => {
+  registry.identify.mockReset();
+  registry.identify.mockImplementation(
+    async (token) => userIdByToken.get(token) ?? null,
+  );
+});
 
 function contextWith(headers: Record<string, string>) {
   const request = { headers } as unknown as AuthenticatedRequest;
@@ -25,21 +31,22 @@ function contextWith(headers: Record<string, string>) {
 }
 
 describe('UserTokenGuard', () => {
-  it("sets the user ID that belongs to the caller's token", () => {
+  it("sets the user ID the registry gives for the caller's token", async () => {
     const { context, request } = contextWith({
       authorization: 'Bearer token-02',
     });
 
-    expect(guard.canActivate(context)).toBe(true);
+    expect(await guard.canActivate(context)).toBe(true);
     expect(request.userId).toBe('user-02');
+    expect(registry.identify).toHaveBeenCalledExactlyOnceWith('token-02');
   });
 
-  it('reads the scheme without regard to case, as HTTP defines it', () => {
+  it('reads the scheme without regard to case, as HTTP defines it', async () => {
     const { context, request } = contextWith({
       authorization: 'bearer token-01',
     });
 
-    expect(guard.canActivate(context)).toBe(true);
+    expect(await guard.canActivate(context)).toBe(true);
     expect(request.userId).toBe('user-01');
   });
 
@@ -49,16 +56,27 @@ describe('UserTokenGuard', () => {
     ['another scheme', { authorization: 'Basic token-01' }],
     ['no token', { authorization: 'Bearer ' }],
     ['an unknown token', { authorization: 'Bearer token-99' }],
-    // The admin credential is not a user.
-    ['the admin token', { authorization: 'Bearer admin-token' }],
-  ])('answers 401 for %s', (_case, headers) => {
+  ])('answers 401 for %s', async (_case, headers) => {
     const { context, request } = contextWith(headers);
 
-    expect(() => guard.canActivate(context)).toThrow(UnauthorizedException);
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      UnauthorizedException,
+    );
     expect(request.userId).toBeUndefined();
   });
 
-  it('ignores a user ID the client sends', () => {
+  it('passes a registry outage on to the error filter, not as a 401', async () => {
+    const outage = new StoreUnavailable(new Error('offline'));
+    registry.identify.mockRejectedValue(outage);
+    const { context, request } = contextWith({
+      authorization: 'Bearer token-01',
+    });
+
+    await expect(guard.canActivate(context)).rejects.toBe(outage);
+    expect(request.userId).toBeUndefined();
+  });
+
+  it('ignores a user ID the client sends', async () => {
     // Identity comes from the credential only. A header naming another user
     // must not let one user spend, or read, another user's quota.
     const { context, request } = contextWith({
@@ -66,7 +84,7 @@ describe('UserTokenGuard', () => {
       'x-user-id': 'user-02',
     });
 
-    guard.canActivate(context);
+    await guard.canActivate(context);
 
     expect(request.userId).toBe('user-01');
   });

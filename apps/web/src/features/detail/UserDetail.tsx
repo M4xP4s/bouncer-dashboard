@@ -82,10 +82,10 @@ function DetailContent({
   );
   // The loaded row goes through the live ordering; the panel then shows
   // the same row as the table.
-  const { applyRow } = live;
+  const { applyDetailRow } = live;
   useEffect(() => {
-    if (detail.data) applyRow(detail.data.row);
-  }, [detail.data, applyRow]);
+    if (detail.data) applyDetailRow(detail.data.row);
+  }, [detail.data, applyDetailRow]);
 
   const row = live.rows.get(userId);
   const records = mergeRequests(

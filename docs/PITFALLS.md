@@ -103,7 +103,8 @@ sequenceDiagram
 transaction, on every request and not only the first.
 **Check:** mocked store: the expiry is queued inside the admission
 transaction. Real store: every key the system writes has its specified
-expiry or is one of the documented keys that exist once per configured user.
+expiry or is one of the documented keys that exist once per registered user
+or hold the registry.
 
 ### P6. Rejections that multiply work
 
@@ -160,7 +161,7 @@ quota bounds admitted requests. It does not bound rejections, requests
 during a suspension or the history kept for the dashboard.
 
 **Guard:** every key has an expiry, a maximum length or exists once per
-configured user. An expiry bounds how long data lives, not how much there is
+registered user; the registry's keys grow with the users registered. An expiry bounds how long data lives, not how much there is
 at once: traffic during a suspension, or a rejection whose cleanup failed,
 still grows the current window's set until its key expires. The application
 enforces no bound on peak memory.
@@ -275,7 +276,7 @@ negative grant then reduces capacity, a limit sent as a string is stored and
 breaks the next admission, and a mistyped user ID silently becomes a new
 user.
 
-**Guard:** before anything is written, a user that is not configured
+**Guard:** before anything is written, a user that is not registered
 answers 404 and a body value that is not an integer in its stated range, or
 a field that is not expected, answers 400.
 **Check:** real store: wrong types, non-integers, out-of-range values and an

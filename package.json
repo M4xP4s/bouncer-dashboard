@@ -18,7 +18,9 @@
     "test:integration": "npm run test:e2e -w apps/api",
     "check:contracts": "tsc -p packages/contracts && node apps/web/src/fixtures/check.ts",
     "check:two-process": "node scripts/two-process-check.mjs",
-    "demo:traffic": "node scripts/traffic.mjs"
+    "demo:traffic": "node scripts/traffic.mjs",
+    "seed:users": "npm run build -w apps/api && node --env-file=.env.example --env-file-if-exists=.env apps/api/dist/users/seed.js",
+    "check:population": "npm run build -w apps/api && node scripts/population-check.mjs"
   },
   "devDependencies": {
     "typescript": "^6.0.0"

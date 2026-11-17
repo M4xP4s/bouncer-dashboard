@@ -10,6 +10,7 @@ import {
   resetUpdate,
   users,
 } from '../fixtures/index.ts';
+import { usersPage } from '../fixtures/usersPage.ts';
 import { SECOND_MS } from '../lib/time.ts';
 import type { Client, ClientOptions } from './client.ts';
 import { HttpError } from './http.ts';
@@ -81,7 +82,8 @@ export function createClient(options: ClientOptions): Client {
   };
 
   return {
-    users: (signal) => respond(() => [...rows.values()], signal),
+    users: (query, signal) =>
+      respond(() => usersPage([...rows.values()], query, clock()), signal),
     detail: (id, signal) => respond(() => detail(id), signal),
     history: (id, range, signal) => respond(() => history(id, range), signal),
     analytics: (signal) => respond(() => analytics, signal),

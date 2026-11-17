@@ -1,5 +1,7 @@
 import { vi } from 'vitest';
+import type { UserRow, UsersPage } from '@app/contracts';
 import type { Client } from '../api/client.ts';
+import { NOW } from '../fixtures/index.ts';
 import type { LiveSocket, SocketEvents } from '../api/socket.ts';
 
 export function deferred<T>() {
@@ -50,4 +52,20 @@ export function mockSocket() {
     disconnect: vi.fn(),
   };
   return { ...socket, listeners };
+}
+
+/** A first page of 50 that holds exactly `rows`, read at the fixed time. */
+export function pageOf(
+  rows: UserRow[],
+  changes: Partial<UsersPage> = {},
+): UsersPage {
+  return {
+    rows,
+    total: rows.length,
+    page: 1,
+    pageSize: 50,
+    startedAt: NOW,
+    completedAt: NOW,
+    ...changes,
+  };
 }

@@ -1,5 +1,6 @@
 import {
   NEXT_HOUR,
+  REGISTRY_KEY_NAMES,
   useFrozenApplication,
   windowKey,
 } from './support/application.js';
@@ -71,10 +72,10 @@ describe('admission and identity', () => {
 
     await api.sample(null).set('x-user-id', 'user-02').expect(401);
     await api.sample('unknown').set('x-user-id', 'user-02').expect(401);
-    const keysAfterRefusals = await api.redis.keys('rl:*');
+    const keysAfterRefusals = (await api.redis.keys('rl:*')).sort();
     const response = await api.sample().set('x-user-id', 'user-02').expect(200);
 
-    expect(keysAfterRefusals).toEqual([]);
+    expect(keysAfterRefusals).toEqual(REGISTRY_KEY_NAMES);
     expect(response.body.userId).toBe('user-01');
     expect(response.headers['x-count']).toBe('99');
     expect(await api.redis.zCard(windowKey('user-01'))).toBe(1);

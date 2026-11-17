@@ -14,8 +14,14 @@ describe('loadConfig', () => {
     expect(config.port).toBe(3000);
     expect(config.redisUrl).toBe('redis://localhost:6379');
     expect(config.adminToken).toBe('admin-secret');
-    expect([...config.userIds]).toEqual(['user-01', 'user-02']);
-    expect(config.userIdByToken.get('token-02')).toBe('user-02');
+    expect([...config.userIdByToken]).toEqual([
+      ['token-01', 'user-01'],
+      ['token-02', 'user-02'],
+    ]);
+  });
+
+  it('accepts an empty DEMO_USERS, as the registry holds the users', () => {
+    expect(loadConfig({ ...valid, DEMO_USERS: '' }).userIdByToken.size).toBe(0);
   });
 
   it.each([
@@ -51,7 +57,7 @@ describe('loadConfig', () => {
 
   it('reports every problem at once', () => {
     expect(() => loadConfig({})).toThrow(
-      /PORT[\s\S]*REDIS_URL[\s\S]*ADMIN_TOKEN[\s\S]*DEMO_USERS/,
+      /PORT[\s\S]*REDIS_URL[\s\S]*ADMIN_TOKEN/,
     );
   });
 

@@ -30,12 +30,16 @@ const socket = vi.hoisted(() => {
 });
 const io = vi.hoisted(() => vi.fn());
 vi.mock('socket.io-client', () => ({ io }));
-vi.mock('./api/client.ts', () => ({
-  createClient: () => ({
-    users: () => new Promise(() => {}),
-    analytics: () => new Promise(() => {}),
-  }),
-}));
+vi.mock('./api/client.ts', async () => {
+  const { users } = await import('./fixtures/index.ts');
+  const { pageOf } = await import('./lib/test-helpers.ts');
+  return {
+    createClient: () => ({
+      users: async () => pageOf(users),
+      analytics: () => new Promise(() => {}),
+    }),
+  };
+});
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -79,11 +83,15 @@ it('connects with the token in the handshake, on its own origin', () => {
   });
 });
 
-it('shows a row when rate:update arrives, with the values the server sent', () => {
+/** Lets the page read that connecting started answer. */
+const settlePageRead = () => act(async () => {});
+
+it('shows a row when rate:update arrives, with the values the server sent', async () => {
   renderApp();
   signIn();
   socket.receive('connect');
   expect(screen.getByText('Loading users…')).toBeTruthy();
+  await settlePageRead();
 
   socket.receive('rate:update', requestUpdate);
 
@@ -110,9 +118,11 @@ it('shows a row when rate:update arrives, with the values the server sent', () =
   ]);
 });
 
-it('keeps the newer row when an older event arrives late', () => {
+it('keeps the newer row when an older event arrives late', async () => {
   renderApp();
   signIn();
+  socket.receive('connect');
+  await settlePageRead();
   socket.receive('rate:update', requestUpdate);
 
   const late = {
@@ -124,7 +134,7 @@ it('keeps the newer row when an older event arrives late', () => {
   expect(screen.getByText('87 / 100')).toBeTruthy();
 });
 
-it('says when the data last changed, not only that it is connected', () => {
+it('says when the data last changed, not only that it is connected', async () => {
   renderApp();
   signIn();
   expect(screen.getByText(/connecting/i)).toBeTruthy();
@@ -132,6 +142,7 @@ it('says when the data last changed, not only that it is connected', () => {
   socket.receive('connect');
   expect(screen.getByRole('status').textContent).toBe('Live');
   expect(screen.getByText('No update yet')).toBeTruthy();
+  await settlePageRead();
 
   socket.receive('rate:update', requestUpdate);
   expect(screen.getByText('Last update 10:42:01 UTC')).toBeTruthy();

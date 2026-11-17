@@ -4,6 +4,7 @@ import {
   ADMIN_TOKEN,
   drainEvents,
   observeDashboard,
+  REGISTRY_KEY_NAMES,
   requestUpdatesOf,
   useFrozenApplication,
 } from './support/application.js';
@@ -78,6 +79,28 @@ describe('admin HTTP and events', () => {
   });
 
   it.each([
+    ['put', '/users/no-such-user/limit', { limit: 1.5 }],
+    ['post', '/users/no-such-user/suspension', { minutes: '5' }],
+    ['post', '/users/no-such-user/extra', { amount: 0 }],
+    ['get', '/users/no-such-user/history?range=week', undefined],
+  ] as const)(
+    '%s %s answers 404 for an unknown user before the invalid value, and writes nothing',
+    async (method, path, body) => {
+      const api = application();
+      const keys = (await api.redis.keys('*')).sort();
+
+      const response = await api.admin(method, path, body).expect(404);
+
+      expect(response.body).toEqual({
+        statusCode: 404,
+        error: 'Not Found',
+        message: 'Unknown user.',
+      });
+      expect((await api.redis.keys('*')).sort()).toEqual(keys);
+    },
+  );
+
+  it.each([
     ['no token', null],
     ['a user token', 'test-token-01'],
   ])(
@@ -89,7 +112,7 @@ describe('admin HTTP and events', () => {
         await api.admin(method, path, body, token).expect(401);
 
       await expect(api.dashboard(token)).rejects.toThrow('Unauthorized');
-      expect(await api.redis.keys('*')).toEqual([]);
+      expect((await api.redis.keys('*')).sort()).toEqual(REGISTRY_KEY_NAMES);
     },
   );
 

@@ -17,7 +17,12 @@ import {
   requestUpdate,
   users,
 } from './fixtures/index.ts';
-import { deferred, mockClient, mockSocket } from './lib/test-helpers.ts';
+import {
+  deferred,
+  mockClient,
+  mockSocket,
+  pageOf,
+} from './lib/test-helpers.ts';
 import App from './App.tsx';
 
 let client: ReturnType<typeof mockClient>;
@@ -46,7 +51,7 @@ beforeEach(() => {
   sessionStorage.setItem('adminToken', 'demo');
   client = mockClient();
   socket = mockSocket();
-  client.users.mockResolvedValue(users);
+  client.users.mockResolvedValue(pageOf(users));
   client.analytics.mockResolvedValue(analytics);
   client.detail.mockImplementation(async (id) => ({
     row: users.find((row) => row.userId === id)!,
@@ -189,7 +194,9 @@ it('reconciles a failed action after its form was closed without leaking the err
   // snapshot carries the reset row.
   client.users.mockClear();
   client.users.mockResolvedValue(
-    users.map((row) => (row.userId === 'user-01' ? user01AfterReset : row)),
+    pageOf(
+      users.map((row) => (row.userId === 'user-01' ? user01AfterReset : row)),
+    ),
   );
 
   await act(async () =>

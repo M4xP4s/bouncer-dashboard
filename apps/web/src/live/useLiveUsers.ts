@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { RateLimitExceededEvent, UserRow } from '@app/contracts';
+import type {
+  RateLimitExceededEvent,
+  UserRow,
+  UsersQuery,
+} from '@app/contracts';
 import type { Session } from '../api/useSession.ts';
 import {
   initialState,
@@ -9,13 +13,21 @@ import {
 
 export type { Connection, SnapshotState } from './liveSession.ts';
 
-/** The live state of one session, and the two ways a component changes it. */
+/** The live state of one session, and the ways a component changes it. */
 export function useLiveUsers(
   session: Session,
+  query: UsersQuery,
+  selected: string | null,
   onLimitExceeded?: (event: RateLimitExceededEvent) => void,
 ) {
   const [state, setState] = useState(initialState);
   const live = useRef<LiveSession | null>(null);
+  // A ref, so a new page or selection keeps the socket.
+  const viewRef = useRef({ query, selected });
+  useEffect(() => {
+    viewRef.current = { query, selected };
+    live.current?.show(viewRef.current);
+  }, [query, selected]);
   // A ref, so a new callback does not reopen the socket.
   const alertRef = useRef(onLimitExceeded);
   useEffect(() => {
@@ -24,8 +36,11 @@ export function useLiveUsers(
 
   useEffect(() => {
     if (session.signal.aborted) return;
-    const started = startLiveSession(session, setState, (event) =>
-      alertRef.current?.(event),
+    const started = startLiveSession(
+      session,
+      viewRef.current,
+      setState,
+      (event) => alertRef.current?.(event),
     );
     live.current = started;
     return () => {
@@ -37,10 +52,13 @@ export function useLiveUsers(
   const applyRow = useCallback((row: UserRow) => {
     live.current?.applyRow(row);
   }, []);
+  const applyDetailRow = useCallback((row: UserRow) => {
+    live.current?.applyDetailRow(row);
+  }, []);
   const refresh = useCallback(() => {
     live.current?.refresh();
   }, []);
-  return { ...state, applyRow, refresh };
+  return { ...state, applyRow, applyDetailRow, refresh };
 }
 
 export type LiveUsers = ReturnType<typeof useLiveUsers>;

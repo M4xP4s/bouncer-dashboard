@@ -40,6 +40,25 @@ export class StoreUnavailable extends Error {
   }
 }
 
+/** Fail fast while disconnected; wrap only execution, never our own code. */
+export async function storeCall<T>(
+  redis: RedisClient,
+  command: () => Promise<T>,
+): Promise<T> {
+  // The client otherwise holds a command until a reconnect attempt settles
+  // and might apply a mutation after its caller has already given up.
+  if (!redis.isReady) {
+    throw new StoreUnavailable(new Error('The Redis connection is down.'));
+  }
+  const execution = command();
+  try {
+    return await execution;
+  } catch (cause) {
+    if (cause instanceof ErrorReply) throw cause;
+    throw new StoreUnavailable(cause);
+  }
+}
+
 /** The decision for one request and the row that decision produced. */
 export interface Admission {
   outcome: RequestOutcome;
@@ -358,23 +377,13 @@ export class RateLimitStore {
       .hGetAll(keys.user(userId));
   }
 
-  /** Fail fast while disconnected; wrap only execution, never our own code. */
-  private async transaction(
+  private transaction(
     queue: (multi: RedisTransaction) => void,
   ): Promise<unknown[]> {
-    // The client otherwise holds MULTI until a reconnect attempt settles and
-    // might apply a mutation after its caller has already given up.
-    if (!this.redis.isReady) {
-      throw new StoreUnavailable(new Error('The Redis connection is down.'));
-    }
-    const multi = this.redis.multi();
-    queue(multi);
-    const execution = multi.exec();
-    try {
-      return await execution;
-    } catch (cause) {
-      if (cause instanceof ErrorReply) throw cause;
-      throw new StoreUnavailable(cause);
-    }
+    return storeCall(this.redis, () => {
+      const multi = this.redis.multi();
+      queue(multi);
+      return multi.exec();
+    });
   }
 }

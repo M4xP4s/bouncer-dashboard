@@ -4,9 +4,13 @@ import { APP_FILTER } from '@nestjs/core';
 import { type INestApplication, Logger } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
 import type { UserRow } from '@app/contracts';
+import { setTimeout as delay } from 'node:timers/promises';
 import request from 'supertest';
 import { mockDeep, mockReset } from 'vitest-mock-extended';
-import { AdminController, SeededUserPipe } from './admin.controller.js';
+import {
+  AdminController,
+  RegisteredUserInterceptor,
+} from './admin.controller.js';
 import { AdminTokenGuard } from '../auth/admin-token.guard.js';
 import { APP_CONFIG, loadConfig } from '../config/config.js';
 import { LiveGateway } from '../live/live.gateway.js';
@@ -16,6 +20,8 @@ import {
 } from '../rate-limit/rate-limit.store.js';
 import { buildRow } from '../rate-limit/row.js';
 import { ApiErrorFilter } from '../api-error.filter.js';
+import { UserRegistry } from '../users/user-registry.js';
+import { UserReads } from './user-reads.js';
 
 const config = loadConfig({
   PORT: '3000',
@@ -24,6 +30,8 @@ const config = loadConfig({
   DEMO_USERS: 'user:token',
 });
 const now = Date.parse('2026-11-16T10:42:00.000Z');
+// Longer than validating a body takes, so a check that raced it would lose.
+const REGISTRY_DELAY_MS = 50;
 const row = buildRow('user', [1, null, null, null, { v: '7' }], now);
 const actions = [
   {
@@ -101,6 +109,18 @@ const routes = [
 const bodyActions = actions.flatMap(({ method, path, validation }) =>
   validation ? [{ method, path, ...validation }] : [],
 );
+const unknownUserWithInvalidValue = [
+  ...bodyActions.map(({ method, path, field }) => ({
+    method,
+    path: `${userPath('missing')}/${path}`,
+    body: { [field]: 1.5 },
+  })),
+  {
+    method: 'get',
+    path: `${userPath('missing')}/history?range=week`,
+    body: undefined,
+  },
+] as const;
 const storeMethods = [
   'snapshot',
   'detail',
@@ -112,6 +132,27 @@ const storeMethods = [
   'unsuspend',
   'addExtra',
 ] as const;
+const invalidListQueries = [
+  { reason: 'an unknown field', query: 'sort=used' },
+  { reason: 'a repeated page', query: 'page=1&page=2' },
+  { reason: 'a repeated search', query: 'search=a&search=b' },
+  { reason: 'a nested field', query: 'search[x]=y' },
+  { reason: 'page 0', query: 'page=0' },
+  { reason: 'a fractional page', query: 'page=1.5' },
+  { reason: 'a page that is not a number', query: 'page=first' },
+  { reason: 'a page with an exponent', query: 'page=1e1' },
+  { reason: 'a hexadecimal page', query: 'page=0x10' },
+  { reason: 'a signed page', query: 'page=%2B5' },
+  { reason: 'a page with a space', query: 'page=%205' },
+  { reason: 'an empty page', query: 'page=' },
+  { reason: 'a pageSize with an exponent', query: 'pageSize=5e1' },
+  { reason: 'a page past the safe offset', query: `page=${2 ** 53}` },
+  { reason: 'pageSize 0', query: 'pageSize=0' },
+  { reason: 'pageSize 101', query: 'pageSize=101' },
+  { reason: 'a search of 65 characters', query: `search=${'x'.repeat(65)}` },
+  { reason: 'an unknown status', query: 'status=warning' },
+  { reason: 'an unknown period', query: 'active=300000' },
+];
 const invalidBodies = bodyActions.flatMap(
   ({ method, path, field, aboveMax }) => [
     { method, path, reason: 'missing value', body: {} },
@@ -142,15 +183,18 @@ function expectApiError(
 
 describe('admin HTTP', () => {
   let app: INestApplication;
-  let pipeTransform: ReturnType<typeof vi.spyOn>;
   const store = mockDeep<RateLimitStore>();
   const live = mockDeep<LiveGateway>();
+  const registry = mockDeep<UserRegistry>();
+  const reads = mockDeep<UserReads>();
   const responseFinished = vi.fn();
 
   function expectNoStoreOrEvent() {
     for (const method of storeMethods) {
       expect(store[method], method).not.toHaveBeenCalled();
     }
+    expect(reads.page).not.toHaveBeenCalled();
+    expect(reads.analytics).not.toHaveBeenCalled();
     expect(live.emitUpdate).not.toHaveBeenCalled();
   }
 
@@ -158,16 +202,20 @@ describe('admin HTTP', () => {
     vi.useFakeTimers({ toFake: ['Date'], now });
     mockReset(store);
     mockReset(live);
+    mockReset(registry);
+    mockReset(reads);
+    registry.exists.mockImplementation(async (userId) => userId === 'user');
     responseFinished.mockClear();
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
-    pipeTransform = vi.spyOn(SeededUserPipe.prototype, 'transform');
     const module = await Test.createTestingModule({
       controllers: [AdminController],
       providers: [
         { provide: APP_FILTER, useClass: ApiErrorFilter },
         AdminTokenGuard,
-        SeededUserPipe,
+        RegisteredUserInterceptor,
         { provide: APP_CONFIG, useValue: config },
+        { provide: UserRegistry, useValue: registry },
+        { provide: UserReads, useValue: reads },
         { provide: RateLimitStore, useValue: store },
         { provide: LiveGateway, useValue: live },
       ],
@@ -202,7 +250,7 @@ describe('admin HTTP', () => {
       const response = await call;
 
       expectApiError(response, 401);
-      expect(pipeTransform).not.toHaveBeenCalled();
+      expect(registry.exists).not.toHaveBeenCalled();
       expectNoStoreOrEvent();
     },
   );
@@ -215,7 +263,7 @@ describe('admin HTTP', () => {
         .set('Authorization', authorization);
 
       expectApiError(response, 401);
-      expect(pipeTransform).not.toHaveBeenCalled();
+      expect(registry.exists).not.toHaveBeenCalled();
       expectNoStoreOrEvent();
     },
   );
@@ -234,13 +282,100 @@ describe('admin HTTP', () => {
         .send(body);
 
       expectApiError(response, 404);
-      expect(pipeTransform).toHaveBeenCalledExactlyOnceWith(
-        'missing',
-        expect.objectContaining({ type: 'param', data: 'userId' }),
-      );
+      expect(registry.exists).toHaveBeenCalledExactlyOnceWith('missing');
       expectNoStoreOrEvent();
     },
   );
+
+  it.each(unknownUserWithInvalidValue)(
+    '$method $path answers 404 before the invalid value is validated, however late the registry answers',
+    async ({ method, path, body }) => {
+      registry.exists.mockImplementation(async () => {
+        await delay(REGISTRY_DELAY_MS);
+        return false;
+      });
+      const response = await request(app.getHttpServer())
+        [method](path)
+        .set('Authorization', 'Bearer admin')
+        .send(body);
+
+      expectApiError(response, 404);
+      expectNoStoreOrEvent();
+    },
+  );
+
+  it.each(['bad:id', 'bad%20id', 'x'.repeat(65)])(
+    'refuses the malformed user ID %s with 400 before the registry is read',
+    async (userId) => {
+      const response = await request(app.getHttpServer())
+        .put(`${userPath(userId)}/limit`)
+        .set('Authorization', 'Bearer admin')
+        .send({ limit: 1.5 });
+
+      expectApiError(response, 400);
+      expect(response.body).toMatchObject({ message: 'Malformed user ID.' });
+      expect(registry.exists).not.toHaveBeenCalled();
+      expectNoStoreOrEvent();
+    },
+  );
+
+  it('reads the first page of 50 unfiltered rows when the query is empty', async () => {
+    await request(app.getHttpServer())
+      .get('/admin/users')
+      .set('Authorization', 'Bearer admin');
+
+    expect(reads.page).toHaveBeenCalledExactlyOnceWith(
+      { page: 1, pageSize: 50, search: '', status: 'any', active: 'any' },
+      now,
+    );
+  });
+
+  it('passes every list field on as a number or a string', async () => {
+    await request(app.getHttpServer())
+      .get(
+        '/admin/users?page=3&pageSize=100&search=Ab&status=Warning&active=1h',
+      )
+      .set('Authorization', 'Bearer admin');
+
+    expect(reads.page).toHaveBeenCalledExactlyOnceWith(
+      { page: 3, pageSize: 100, search: 'Ab', status: 'Warning', active: '1h' },
+      now,
+    );
+  });
+
+  it.each(invalidListQueries)(
+    'refuses a list query with $reason before any read',
+    async ({ query }) => {
+      const response = await request(app.getHttpServer())
+        .get(`/admin/users?${query}`)
+        .set('Authorization', 'Bearer admin');
+
+      expectApiError(response, 400);
+      expectNoStoreOrEvent();
+    },
+  );
+
+  it('names the field and its bound when pageSize is too large', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/admin/users?pageSize=101')
+      .set('Authorization', 'Bearer admin');
+
+    expect(response.body).toMatchObject({
+      message: 'pageSize must not be greater than 100',
+    });
+  });
+
+  it('answers 503 when the registry cannot be read for a user route', async () => {
+    registry.exists.mockRejectedValue(
+      new StoreUnavailable(new Error('offline')),
+    );
+    const response = await request(app.getHttpServer())
+      .get('/admin/users/user')
+      .set('Authorization', 'Bearer admin');
+
+    expectApiError(response, 503);
+    expectNoStoreOrEvent();
+  });
 
   it.each(invalidBodies)(
     '$method $path refuses $reason without store access',
@@ -304,7 +439,7 @@ describe('admin HTTP', () => {
       .send('{"limit":5,"__proto__":null}');
 
     expectApiError(response, 401);
-    expect(pipeTransform).not.toHaveBeenCalled();
+    expect(registry.exists).not.toHaveBeenCalled();
     expectNoStoreOrEvent();
   });
 
@@ -315,7 +450,7 @@ describe('admin HTTP', () => {
       .send('{');
 
     expectApiError(response, 400);
-    expect(pipeTransform).not.toHaveBeenCalled();
+    expect(registry.exists).not.toHaveBeenCalled();
     expectNoStoreOrEvent();
   });
 

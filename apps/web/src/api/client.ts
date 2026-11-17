@@ -7,6 +7,8 @@ import type {
   SuspendBody,
   UserDetail,
   UserRow,
+  UsersPage,
+  UsersQuery,
 } from '@app/contracts';
 import { HttpError, request } from './http.ts';
 import {
@@ -14,7 +16,7 @@ import {
   isDetail,
   isHistory,
   isUserRow,
-  isUsers,
+  isUsersPage,
 } from './validation.ts';
 
 const ADMIN_PATH = '/api/admin';
@@ -30,7 +32,7 @@ export interface ClientOptions {
 
 /** Every method also accepts a signal that cancels that one request. */
 export interface Client {
-  users(signal?: AbortSignal): Promise<UserRow[]>;
+  users(query: UsersQuery, signal?: AbortSignal): Promise<UsersPage>;
   detail(userId: string, signal?: AbortSignal): Promise<UserDetail>;
   history(
     userId: string,
@@ -68,6 +70,17 @@ interface CallInit {
 const userPath = (userId: string) =>
   `${ADMIN_PATH}/users/${encodeURIComponent(userId)}`;
 
+function usersPath(query: UsersQuery): string {
+  const params = new URLSearchParams({
+    page: String(query.page),
+    pageSize: String(query.pageSize),
+    search: query.search,
+    status: query.status,
+    active: query.active,
+  });
+  return `${ADMIN_PATH}/users?${params}`;
+}
+
 export function createClient(options: ClientOptions): Client {
   async function call<T>(
     isValid: Guard<T>,
@@ -102,7 +115,7 @@ export function createClient(options: ClientOptions): Client {
     call(isUserRow, path, { ...init, method });
 
   return {
-    users: (signal) => call(isUsers, `${ADMIN_PATH}/users`, { signal }),
+    users: (query, signal) => call(isUsersPage, usersPath(query), { signal }),
     detail: (id, signal) => call(isDetail, userPath(id), { signal }),
     history: (id, range, signal) =>
       call(isHistory, `${userPath(id)}/history?range=${range}`, { signal }),

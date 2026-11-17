@@ -5,7 +5,8 @@ import { createClient } from '../../api/client.ts';
 import { openSocket } from '../../api/index.ts';
 import type { Session } from '../../api/useSession.ts';
 import { analytics, NOW, users } from '../../fixtures/index.ts';
-import { mockSocket } from '../../lib/test-helpers.ts';
+import { DEFAULT_USERS_QUERY } from '../../api/usersQuery.ts';
+import { mockSocket, pageOf } from '../../lib/test-helpers.ts';
 import { useLiveUsers } from '../../live/useLiveUsers.ts';
 import { AnalyticsCards } from './AnalyticsCards.tsx';
 
@@ -28,7 +29,7 @@ afterEach(() => {
 });
 
 function LiveAnalytics({ session }: { session: Session }) {
-  const live = useLiveUsers(session);
+  const live = useLiveUsers(session, DEFAULT_USERS_QUERY, null);
   return <AnalyticsCards session={session} tick={live.tick} />;
 }
 
@@ -73,7 +74,9 @@ function stubFetch() {
   const fetchMock = vi
     .fn<typeof fetch>()
     .mockImplementation((path, options) => {
-      if (path === '/api/admin/users') return jsonResponse(users);
+      if (String(path).startsWith('/api/admin/users?')) {
+        return jsonResponse(pageOf(users));
+      }
       if (analyticsAnswers) return jsonResponse(analytics);
       return hangUntilAborted(options?.signal);
     });
@@ -119,4 +122,5 @@ it('keeps a 10-second HTTP timeout visible through the queued refresh until reco
   await advance(1);
   expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.getByText('64%')).toBeTruthy();
+  expect(screen.getByText('Updated 10:42:00 UTC')).toBeTruthy();
 });
