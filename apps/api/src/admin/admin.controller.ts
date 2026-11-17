@@ -34,8 +34,11 @@ import {
 import type {
   ActivePeriod,
   Analytics,
+  ExtraBody,
   HistoryBucket,
+  SetLimitBody,
   Status,
+  SuspendBody,
   UpdateCause,
   UserDetail,
   UserRow,
@@ -67,13 +70,13 @@ const STATUS_FILTERS: (Status | 'any')[] = ['any', 'OK', 'Warning', 'Exceeded'];
 const ACTIVE_FILTERS: (ActivePeriod | 'any')[] = ['any', '5m', '1h', '24h'];
 const DECIMAL_DIGITS = /^\d+$/;
 
-class LimitBody {
+class SetLimitParams implements SetLimitBody {
   @IsInt() @Min(MIN_ACTION_VALUE) @Max(MAX_BASE_LIMIT) limit: number;
 }
-class SuspendBody {
+class SuspendParams implements SuspendBody {
   @IsInt() @Min(MIN_ACTION_VALUE) @Max(MAX_SUSPENSION_MINUTES) minutes: number;
 }
-class ExtraBody {
+class ExtraParams implements ExtraBody {
   @IsInt() @Min(MIN_ACTION_VALUE) @Max(MAX_EXTRA_REQUESTS) amount: number;
 }
 
@@ -103,9 +106,9 @@ class UsersQueryParams implements UsersQuery {
 }
 
 const allowedKeyByBody = new Map<unknown, string>([
-  [LimitBody, 'limit'],
-  [SuspendBody, 'minutes'],
-  [ExtraBody, 'amount'],
+  [SetLimitParams, 'limit'],
+  [SuspendParams, 'minutes'],
+  [ExtraParams, 'amount'],
 ]);
 
 function hasUnexpectedBodyKey(value: unknown, allowedKey: string): boolean {
@@ -221,7 +224,7 @@ export class AdminController {
   @UseInterceptors(RegisteredUserInterceptor)
   async limit(
     @Param('userId') userId: string,
-    @Body() body: LimitBody,
+    @Body() body: SetLimitParams,
   ): Promise<UserRow> {
     const now = Date.now();
     const row = await this.store.setLimit(userId, now, body.limit);
@@ -233,7 +236,7 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   async suspend(
     @Param('userId') userId: string,
-    @Body() body: SuspendBody,
+    @Body() body: SuspendParams,
   ): Promise<UserRow> {
     const now = Date.now();
     const row = await this.store.suspend(userId, now, body.minutes);
@@ -253,7 +256,7 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   async extra(
     @Param('userId') userId: string,
-    @Body() body: ExtraBody,
+    @Body() body: ExtraParams,
   ): Promise<UserRow> {
     const now = Date.now();
     const row = await this.store.addExtra(userId, now, body.amount);

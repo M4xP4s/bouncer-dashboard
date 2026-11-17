@@ -1,4 +1,6 @@
+import { Logger } from '@nestjs/common';
 import type { ApiError } from '@app/contracts';
+import { ErrorReply } from 'redis';
 import request, { type Response } from 'supertest';
 import {
   ADMIN_TOKEN,
@@ -46,6 +48,8 @@ function expectApiError(body: ApiError, statusCode: number) {
   expect(body.error).toEqual(expect.any(String));
   expect(body.message).toEqual(expect.any(String));
 }
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('admin HTTP and events', () => {
   const application = useFrozenApplication();
@@ -162,4 +166,58 @@ describe('admin HTTP and events', () => {
     expect(detail.row.userId).toBe(userId);
     expect(changed.body.userId).toBe(userId);
   });
+
+  it('answers a JSON body over 100 KiB with 413 and an error body, and writes nothing', async () => {
+    const api = application();
+    const keysBefore = (await api.redis.keys('*')).sort();
+    // Express's default JSON limit is 102400 bytes; the parser counts bytes.
+    const bodyOfLength = (bytes: number) => {
+      const open = '{"limit":10,"pad":"';
+      const close = '"}';
+      return open + 'x'.repeat(bytes - open.length - close.length) + close;
+    };
+    const send = (body: string) =>
+      request(api.url)
+        .put('/api/admin/users/user-01/limit')
+        .set('Authorization', `Bearer ${ADMIN_TOKEN}`)
+        .set('Content-Type', 'application/json')
+        .send(body);
+
+    // At the limit the body is parsed, so only the unknown field refuses it.
+    const atLimit = await send(bodyOfLength(102_400)).expect(400);
+    const overLimit = await send(bodyOfLength(102_401)).expect(413);
+
+    expect(atLimit.body).toMatchObject({ message: 'Unknown body field.' });
+    expect(overLimit.body).toEqual({
+      statusCode: 413,
+      error: 'Payload Too Large',
+      message: 'request entity too large',
+    });
+    expect((await api.redis.keys('*')).sort()).toEqual(keysBefore);
+  });
+
+  it.each(ADMIN_ACTIONS)(
+    '%s %s answers a Redis error reply with 500, not 503',
+    async (method, path, body) => {
+      const api = application();
+      const logged = vi
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => {});
+      // Every action writes this hash, so a string here draws WRONGTYPE.
+      await api.redis.set('rl:user:user-01', 'not a hash');
+
+      const response = await api.admin(method, path, body).expect(500);
+
+      expect(response.body).toEqual({
+        statusCode: 500,
+        error: 'Internal Server Error',
+        message: 'Internal server error',
+      });
+      // The reply reaches the filter as itself, not wrapped as an outage.
+      expect(logged).toHaveBeenCalledExactlyOnceWith(
+        'Unexpected API error',
+        expect.any(ErrorReply),
+      );
+    },
+  );
 });

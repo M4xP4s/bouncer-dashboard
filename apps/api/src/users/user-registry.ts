@@ -86,8 +86,9 @@ export class UserRegistry implements OnModuleInit {
   }
 
   /**
-   * Every registered ID in order, a batch at a time. Stops at the last ID
-   * registered when it began, so users added meanwhile cannot extend a read.
+   * Every registered ID in string order, a batch at a time. Stops at the
+   * highest ID that existed when it began: a user added meanwhile that sorts
+   * earlier can still be read, but none can extend the read past that ID.
    */
   async *batches(): AsyncGenerator<string[]> {
     const [lastUserId] = await storeCall(this.redis, () =>
