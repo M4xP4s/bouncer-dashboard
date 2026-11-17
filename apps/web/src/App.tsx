@@ -1,6 +1,7 @@
 import { type FormEvent, useCallback, useState } from 'react';
 import {
   Alert,
+  Badge,
   Button,
   Container,
   Group,
@@ -56,6 +57,8 @@ function showLimitAlert(event: RateLimitExceededEvent): void {
     message: `Retry at ${utcTime(event.retryAt)}`,
     color: 'red',
     autoClose: ALERT_VISIBLE_MS,
+    // Mantine greys a message under a title to 3.3:1 on white.
+    styles: { description: { color: 'var(--mantine-color-text)' } },
   });
 }
 
@@ -160,9 +163,9 @@ function ConnectionStatus({
   // be announced.
   return (
     <Group gap="xs">
-      <Text role="status" c={connection === 'live' ? 'green' : 'orange'}>
+      <Badge role="status" color={connection === 'live' ? 'green' : 'orange'}>
         {CONNECTION_TEXT[connection]}
-      </Text>
+      </Badge>
       <Text>{lastUpdate}</Text>
     </Group>
   );
