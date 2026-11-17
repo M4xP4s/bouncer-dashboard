@@ -14,6 +14,10 @@ const windowKey = `rl:win:user-01:${Date.parse('2026-11-16T10:00:00.000Z')}`;
 const hour = Date.parse('2026-11-16T10:00:00.000Z');
 const expiry = Date.parse('2026-11-16T12:00:00.000Z');
 
+function rowReplies(used: number, limit: string | null = null): RowReplies {
+  return [used, limit, null, null, { v: String(used) }];
+}
+
 /**
  * A store on a mocked Redis client (the mock library, nothing running).
  * `exec` answers with the replies of the four admission writes followed by
@@ -48,6 +52,7 @@ function storeWith(
   multi.zRem.mockReturnThis();
   multi.lPush.mockReturnThis();
   multi.lTrim.mockReturnThis();
+  multi.lRange.mockReturnThis();
   multi.expire.mockReturnThis();
   multi.incr.mockReturnThis();
   multi.set.mockReturnThis();
@@ -409,5 +414,269 @@ describe('RateLimitStore.recordOutcome', () => {
       store.recordOutcome('user-01', now, decision('denied')),
     ).rejects.toBe(reply);
     expect(multi.exec).toHaveBeenCalledOnce();
+  });
+});
+
+describe('RateLimitStore admin actions', () => {
+  const actions = [
+    ['reset', (store: RateLimitStore) => store.reset('user-01', now)],
+    ['limit', (store: RateLimitStore) => store.setLimit('user-01', now, 50)],
+    ['suspend', (store: RateLimitStore) => store.suspend('user-01', now, 5)],
+    ['unsuspend', (store: RateLimitStore) => store.unsuspend('user-01', now)],
+    ['extra', (store: RateLimitStore) => store.addExtra('user-01', now, 20)],
+  ] as const;
+
+  it('reset clears only this window and extra, stamps the reset and re-arms', async () => {
+    const { store, multi } = storeWith(0);
+
+    await store.reset('user-01', now);
+
+    expect(multi.del.mock.calls).toEqual([
+      [windowKey],
+      [`rl:extra:user-01:${hour}`],
+    ]);
+    expect(multi.hSet).toHaveBeenCalledExactlyOnceWith(
+      'rl:user:user-01',
+      'lastManualResetAt',
+      `${now}`,
+    );
+    expect(multi.hIncrBy.mock.calls).toEqual([
+      ['rl:user:user-01', 'g', 1],
+      ['rl:user:user-01', 'v', 1],
+    ]);
+    expect(multi.set).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { limit: 50, remaining: 0 },
+    { limit: 100, remaining: 20 },
+    { limit: 200, remaining: 120 },
+  ])(
+    'setLimit $limit writes only policy and re-arms without a pre-read',
+    async ({ limit, remaining }) => {
+      const { store, multi } = storeWith(80, { limit: `${limit}` });
+
+      const row = await store.setLimit('user-01', now, limit);
+
+      expect(row.used).toBe(80);
+      expect(row.remaining).toBe(remaining);
+      expect(multi.set).toHaveBeenCalledExactlyOnceWith(
+        'rl:limit:user-01',
+        `${limit}`,
+      );
+      expect(multi.set).toHaveBeenCalledBefore(multi.get);
+      expect(multi.hIncrBy.mock.calls).toEqual([
+        ['rl:user:user-01', 'g', 1],
+        ['rl:user:user-01', 'v', 1],
+      ]);
+      expect(multi.del).not.toHaveBeenCalled();
+      expect(multi.zAdd).not.toHaveBeenCalled();
+    },
+  );
+
+  it('suspend stores the end time and expires the key at that time without re-arming', async () => {
+    const { store, multi } = storeWith(10);
+    const until = Date.parse('2026-11-16T10:47:00.000Z');
+
+    await store.suspend('user-01', now, 5);
+
+    expect(multi.set).toHaveBeenCalledExactlyOnceWith(
+      'rl:suspend:user-01',
+      `${until}`,
+      {
+        expiration: { type: 'PXAT', value: until },
+      },
+    );
+    expect(multi.hIncrBy).toHaveBeenCalledExactlyOnceWith(
+      'rl:user:user-01',
+      'v',
+      1,
+    );
+    expect(multi.del).not.toHaveBeenCalled();
+  });
+
+  it('unsuspend deletes only the suspension and does not re-arm', async () => {
+    const { store, multi } = storeWith(10);
+
+    await store.unsuspend('user-01', now);
+
+    expect(multi.del).toHaveBeenCalledExactlyOnceWith('rl:suspend:user-01');
+    expect(multi.hIncrBy).toHaveBeenCalledExactlyOnceWith(
+      'rl:user:user-01',
+      'v',
+      1,
+    );
+  });
+
+  it('extra adds to the expiring grant and never writes usage', async () => {
+    const { store, multi } = storeWith(80, { extra: '25' });
+
+    const row = await store.addExtra('user-01', now, 20);
+
+    expect(multi.incrBy).toHaveBeenCalledExactlyOnceWith(
+      `rl:extra:user-01:${hour}`,
+      20,
+    );
+    expect(multi.pExpireAt).toHaveBeenCalledExactlyOnceWith(
+      `rl:extra:user-01:${hour}`,
+      expiry,
+    );
+    expect(multi.hIncrBy.mock.calls).toEqual([
+      ['rl:user:user-01', 'g', 1],
+      ['rl:user:user-01', 'v', 1],
+    ]);
+    expect(multi.zAdd).not.toHaveBeenCalled();
+    expect(multi.del).not.toHaveBeenCalled();
+    expect(multi.set).not.toHaveBeenCalled();
+    expect(row).toMatchObject({ used: 80, total: 125, remaining: 45 });
+  });
+
+  it.each(actions)(
+    '%s increments version once and returns the row read in the same transaction',
+    async (_name, run) => {
+      const { store, redis, multi } = storeWith(7, { limit: '80', extra: '3' });
+
+      const row = await run(store);
+
+      expect(redis.multi).toHaveBeenCalledOnce();
+      expect(multi.exec).toHaveBeenCalledOnce();
+      expect(
+        multi.hIncrBy.mock.calls.filter(([, field]) => field === 'v'),
+      ).toEqual([['rl:user:user-01', 'v', 1]]);
+      expect(multi.hIncrBy).toHaveBeenCalledBefore(multi.zCard);
+      expect(multi.zCard).toHaveBeenCalledExactlyOnceWith(windowKey);
+      expect(multi.get.mock.calls).toEqual([
+        ['rl:limit:user-01'],
+        [`rl:extra:user-01:${hour}`],
+        ['rl:suspend:user-01'],
+      ]);
+      expect(multi.hGetAll).toHaveBeenCalledExactlyOnceWith('rl:user:user-01');
+      expect(multi.hGetAll).toHaveBeenCalledBefore(multi.exec);
+      expect(row).toMatchObject({
+        used: 7,
+        total: 83,
+        remaining: 76,
+        version: 7,
+      });
+    },
+  );
+
+  it.each(actions)(
+    '%s fails at once while the connection is down',
+    async (_name, run) => {
+      const { store, redis } = storeWith(7);
+      Object.defineProperty(redis, 'isReady', { value: false });
+
+      await expect(run(store)).rejects.toBeInstanceOf(StoreUnavailable);
+      expect(redis.multi).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(actions)(
+    '%s preserves an execution failure and never retries an uncertain write',
+    async (_name, run) => {
+      const { store, multi } = storeWith(7);
+      const cause = new Error('reply lost after write');
+      multi.exec.mockRejectedValue(cause);
+
+      await expect(run(store)).rejects.toMatchObject({ cause });
+      expect(multi.exec).toHaveBeenCalledOnce();
+    },
+  );
+});
+
+describe('RateLimitStore reads', () => {
+  it('reads all snapshot rows in one transaction', async () => {
+    const { store, multi, setReplies } = storeWith(0);
+    setReplies([...rowReplies(1), ...rowReplies(2, '10')]);
+
+    const rows = await store.snapshot(['a', 'b'], now);
+
+    expect(
+      rows.map(({ userId, used, limit }) => ({ userId, used, limit })),
+    ).toEqual([
+      { userId: 'a', used: 1, limit: 100 },
+      { userId: 'b', used: 2, limit: 10 },
+    ]);
+    expect(multi.exec).toHaveBeenCalledOnce();
+    expect(multi.zCard).toHaveBeenCalledTimes(2);
+  });
+
+  it('filters and sorts recent records by time then ID', async () => {
+    const { store, multi, setReplies } = storeWith(0);
+    const record = (id: string, at: string) =>
+      JSON.stringify({
+        id,
+        at,
+        outcome: 'allowed',
+        remaining: 1,
+      });
+    setReplies([
+      ...rowReplies(0),
+      [
+        record('b', '2026-11-16T10:42:00.000Z'),
+        record('old', '2026-11-15T10:42:00.000Z'),
+        record('a', '2026-11-16T10:42:00.000Z'),
+        record('young', '2026-11-15T10:42:00.001Z'),
+      ],
+    ]);
+
+    const detail = await store.detail('user-01', now);
+
+    expect(detail.recentRequests.map((r) => r.id)).toEqual(['a', 'b', 'young']);
+    expect(multi.lRange).toHaveBeenCalledExactlyOnceWith(
+      'rl:hist:user-01',
+      0,
+      99,
+    );
+  });
+
+  it('zero-fills an hour across the boundary with exact bucket times and keys', async () => {
+    const { store, multi, setReplies } = storeWith(0);
+    setReplies([{ 'a:43': '2', 'd:59': '1' }, { 'a:42': '3' }]);
+
+    const hourly = await store.history('a', 'hour', now);
+
+    expect(multi.hGetAll.mock.calls).toEqual([
+      [`rl:stat:a:${Date.parse('2026-11-16T09:00:00.000Z')}`],
+      [`rl:stat:a:${Date.parse('2026-11-16T10:00:00.000Z')}`],
+    ]);
+    expect(hourly).toHaveLength(60);
+    expect(hourly[0].start).toBe('2026-11-16T09:43:00.000Z');
+    expect(hourly.at(-1)?.start).toBe('2026-11-16T10:42:00.000Z');
+    expect(hourly[0]).toMatchObject({ allowed: 2, denied: 0 });
+    expect(hourly[16]).toEqual({
+      start: '2026-11-16T09:59:00.000Z',
+      allowed: 0,
+      denied: 1,
+    });
+    expect(hourly.at(-1)).toMatchObject({ allowed: 3, denied: 0 });
+  });
+
+  it('sums daily buckets with exact first and last times and hour keys', async () => {
+    const { store, multi, setReplies } = storeWith(0);
+    setReplies(
+      Array.from({ length: 24 }, (_, i) =>
+        i === 0 ? { 'a:0': '2', 'a:59': '3', 'd:1': '4' } : {},
+      ),
+    );
+    const daily = await store.history('a', 'day', now);
+    const firstHour = Date.parse('2026-11-15T11:00:00.000Z');
+    expect(multi.hGetAll.mock.calls).toEqual(
+      Array.from({ length: 24 }, (_, index) => [
+        `rl:stat:a:${firstHour + index * 3_600_000}`,
+      ]),
+    );
+    expect(daily).toHaveLength(24);
+    expect(daily[0].start).toBe('2026-11-15T11:00:00.000Z');
+    expect(daily.at(-1)?.start).toBe('2026-11-16T10:00:00.000Z');
+    expect(daily[0]).toMatchObject({ allowed: 5, denied: 4 });
+    expect(daily.at(-1)).toMatchObject({ allowed: 0, denied: 0 });
+  });
+
+  it('returns zero for an absent daily count', async () => {
+    const { store, setReplies } = storeWith(0);
+    setReplies([null]);
+    expect(await store.denied429(now)).toBe(0);
   });
 });

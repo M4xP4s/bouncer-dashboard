@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
+import { AdminController, SeededUserPipe } from './admin/admin.controller.js';
+import { AdminTokenGuard } from './auth/admin-token.guard.js';
 import { ApiErrorFilter } from './api-error.filter.js';
 import { UserTokenGuard } from './auth/user-token.guard.js';
 import { ConfigModule } from './config/config.module.js';
@@ -11,11 +13,13 @@ import { SampleController } from './sample/sample.controller.js';
 
 @Module({
   imports: [ConfigModule, RedisModule],
-  controllers: [SampleController],
+  controllers: [SampleController, AdminController],
   providers: [
     { provide: APP_FILTER, useClass: ApiErrorFilter },
     LiveGateway,
     UserTokenGuard,
+    AdminTokenGuard,
+    SeededUserPipe,
     RateLimitStore,
     RateLimitInterceptor,
   ],
