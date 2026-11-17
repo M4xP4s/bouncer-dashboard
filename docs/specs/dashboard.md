@@ -120,12 +120,14 @@ Vitest in jsdom (`npm test -w apps/web`), paths under `apps/web/src/`:
   snapshot; failed and late actions; invalid input never sent.
   `features/table/UsersTable.test.tsx`: search, Status and Last active narrow
   the rows on screen. `features/admin/AdminForms.test.tsx`: Suspend and Add
-  extra send a numeric body; Resume throttling ends the suspension.
+  extra send a numeric body; Resume throttling ends the suspension; one action
+  at a time.
   `features/analytics/AnalyticsCards.test.tsx`: a timeout stays shown.
   `assembled.test.tsx`: focus; exceeded event announced; an action keeps its
   row. `fixture-screen.test.tsx`: one reload per tick.
 - Not covered: charts, the empty-table message, "Past day", Last hour, Last
-  24 hours, "Never".
+  24 hours, "Never", the loading and empty texts, a failed detail load, the
+  detail panel's suspension text, the Total users and 429 values.
 
 ## Milestone
 

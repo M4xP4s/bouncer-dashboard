@@ -3,9 +3,10 @@
 import { MantineProvider } from '@mantine/core';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
+import type { UserRow } from '@app/contracts';
 import type { LiveUsers } from '../../live/useLiveUsers.ts';
 import { users } from '../../fixtures/index.ts';
-import { mockClient } from '../../lib/test-helpers.ts';
+import { deferred, mockClient } from '../../lib/test-helpers.ts';
 import { AdminForms } from './AdminForms.tsx';
 
 function renderForms() {
@@ -58,4 +59,22 @@ it('Resume throttling ends the suspension and shows the returned row', async () 
   fireEvent.click(screen.getByRole('button', { name: 'Resume throttling' }));
   await waitFor(() => expect(client.unsuspend).toHaveBeenCalledWith('user-01'));
   await waitFor(() => expect(live.applyRow).toHaveBeenCalledWith(users[0]));
+});
+
+it('runs one action at a time', async () => {
+  const { client } = renderForms();
+  const reset = deferred<UserRow>();
+  client.reset.mockReturnValue(reset.promise);
+  const button = (name: string) =>
+    screen.getByRole<HTMLButtonElement>('button', { name });
+
+  fireEvent.click(button('Reset usage'));
+
+  expect(button('Resume throttling').disabled).toBe(true);
+  expect(button('Set limit').disabled).toBe(true);
+  fireEvent.click(button('Resume throttling'));
+  expect(client.unsuspend).not.toHaveBeenCalled();
+
+  reset.resolve(users[0]);
+  await waitFor(() => expect(button('Resume throttling').disabled).toBe(false));
 });
