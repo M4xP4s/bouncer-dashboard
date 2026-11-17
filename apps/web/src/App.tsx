@@ -17,6 +17,7 @@ import { UsersTable } from './features/table/UsersTable.tsx';
 import { type Connection, useLiveUsers } from './live/useLiveUsers.ts';
 import { SECOND_MS, utcTime } from './lib/time.ts';
 import { useSession, type Session } from './api/useSession.ts';
+import { DEFAULT_USERS_QUERY } from './api/usersQuery.ts';
 
 // In sessionStorage: closing the tab forgets the token.
 const TOKEN_KEY = 'adminToken';
@@ -141,7 +142,8 @@ function Dashboard({
 
 function DashboardContent({ session }: { session: Session }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const live = useLiveUsers(session, showLimitAlert);
+  const [query, setQuery] = useState(DEFAULT_USERS_QUERY);
+  const live = useLiveUsers(session, query, selected, showLimitAlert);
   return (
     <>
       <Group justify="space-between" mb="md">
@@ -154,6 +156,9 @@ function DashboardContent({ session }: { session: Session }) {
       <AnalyticsCards session={session} tick={live.tick} />
       <UsersTable
         rows={live.rows}
+        page={live.page}
+        query={query}
+        onQuery={setQuery}
         snapshot={live.snapshot}
         now={live.now}
         onSelect={setSelected}

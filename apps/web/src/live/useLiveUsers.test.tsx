@@ -3,10 +3,12 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type {
   RateLimitExceededEvent,
   RateUpdateEvent,
-  UserRow,
+  UsersPage,
+  UsersQuery,
 } from '@app/contracts';
 import { clock, openSocket } from '../api/index.ts';
 import type { Session } from '../api/useSession.ts';
+import { DEFAULT_USERS_QUERY } from '../api/usersQuery.ts';
 import {
   NOW,
   RESET_AT,
@@ -15,7 +17,12 @@ import {
   resetUpdate,
   users,
 } from '../fixtures/index.ts';
-import { deferred, mockClient, mockSocket } from '../lib/test-helpers.ts';
+import {
+  deferred,
+  mockClient,
+  mockSocket,
+  pageOf,
+} from '../lib/test-helpers.ts';
 import { useLiveUsers } from './useLiveUsers.ts';
 
 vi.mock('../api/index.ts', () => ({
@@ -34,10 +41,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function setup() {
+const SECOND_PAGE: UsersQuery = { ...DEFAULT_USERS_QUERY, page: 2 };
+
+function setup(selected: string | null = null) {
   const controller = new AbortController();
   const client = mockClient();
-  client.users.mockResolvedValue(users);
+  client.users.mockResolvedValue(pageOf(users));
   const socket = mockSocket();
   vi.mocked(openSocket).mockReturnValue(socket);
   const session: Session = {
@@ -47,7 +56,10 @@ function setup() {
     onRefused: vi.fn(),
   };
   const onLimitExceeded = vi.fn();
-  const hook = renderHook(() => useLiveUsers(session, onLimitExceeded));
+  const hook = renderHook(
+    (view) => useLiveUsers(session, view.query, view.selected, onLimitExceeded),
+    { initialProps: { query: DEFAULT_USERS_QUERY, selected } },
+  );
   const connect = async () => {
     await act(async () =>
       socket.listeners.connect.forEach((listener) => listener()),
@@ -95,13 +107,13 @@ function numberedRequest(index: number): RateUpdateEvent {
 
 it('loads on connect and reconnect, and keeps a newer event ahead of a slow snapshot', async () => {
   const { result, client, socket, connect, emitUpdate } = setup();
-  const slowSnapshot = deferred<UserRow[]>();
+  const slowSnapshot = deferred<UsersPage>();
   client.users.mockReturnValueOnce(slowSnapshot.promise);
   expect(client.users).not.toHaveBeenCalled();
 
   await connect();
   act(() => emitUpdate(requestUpdate));
-  await act(async () => slowSnapshot.resolve(users));
+  await act(async () => slowSnapshot.resolve(pageOf(users)));
   expect(result.current.rows.get('user-01')).toBe(requestUpdate.row);
   expect(result.current.snapshot.status).toBe('loaded');
   expect(result.current.connection).toBe('live');
@@ -115,8 +127,8 @@ it('loads on connect and reconnect, and keeps a newer event ahead of a slow snap
 
 it('serializes snapshots and coalesces all requests during a pending snapshot once', async () => {
   const { result, client, connect } = setup();
-  const pending = deferred<UserRow[]>();
-  const queued = deferred<UserRow[]>();
+  const pending = deferred<UsersPage>();
+  const queued = deferred<UsersPage>();
   client.users
     .mockReturnValueOnce(pending.promise)
     .mockReturnValueOnce(queued.promise);
@@ -129,11 +141,11 @@ it('serializes snapshots and coalesces all requests during a pending snapshot on
   await connect();
   expect(client.users).toHaveBeenCalledTimes(1);
 
-  await act(async () => pending.resolve(users));
+  await act(async () => pending.resolve(pageOf(users)));
   expect(client.users).toHaveBeenCalledTimes(2);
 
   const repaired = { ...users[0], used: 11 };
-  await act(async () => queued.resolve([repaired]));
+  await act(async () => queued.resolve(pageOf([repaired])));
   expect(result.current.rows.get('user-01')).toBe(repaired);
   expect(client.users).toHaveBeenCalledTimes(2);
 });
@@ -159,7 +171,7 @@ it('ticks every 10 seconds while visible, pauses while hidden, and reconciles on
 });
 
 it.each([
-  ['old window', () => Promise.resolve(users)],
+  ['old window', () => Promise.resolve(pageOf(users))],
   ['error', () => Promise.reject(new Error('offline'))],
 ])(
   'reconciles a boundary once when the snapshot returns %s',
@@ -209,8 +221,8 @@ it('retains a snapshot failure while its queued refresh is pending and clears it
   const { result, client, connect } = setup();
   await connect();
   const heldRows = result.current.rows;
-  const failed = deferred<UserRow[]>();
-  const queued = deferred<UserRow[]>();
+  const failed = deferred<UsersPage>();
+  const queued = deferred<UsersPage>();
   client.users
     .mockReturnValueOnce(failed.promise)
     .mockReturnValueOnce(queued.promise);
@@ -225,12 +237,13 @@ it('retains a snapshot failure while its queued refresh is pending and clears it
   expect(result.current.snapshot).toEqual({ status: 'error', error });
   expect(result.current.rows).toBe(heldRows);
 
-  await act(async () => queued.resolve(users));
+  await act(async () => queued.resolve(pageOf(users)));
   expect(result.current.snapshot).toEqual({ status: 'loaded', error: null });
 });
 
 it('applies current alerts once, drops stale alerts whole, and never fetches for events', () => {
-  const { result, client, onLimitExceeded, emitUpdate, emitExceeded } = setup();
+  const { result, client, onLimitExceeded, emitUpdate, emitExceeded } =
+    setup('user-05');
 
   act(() => {
     emitExceeded(limitExceeded);
@@ -251,8 +264,8 @@ it('applies current alerts once, drops stale alerts whole, and never fetches for
   expect(client.users).not.toHaveBeenCalled();
 });
 
-it('keeps the newest 100 applied live records per user and ignores obsolete requests', () => {
-  const { result, client, emitUpdate } = setup();
+it('keeps the newest 100 applied live records of the selected user and ignores obsolete requests', () => {
+  const { result, client, emitUpdate } = setup('user-01');
 
   act(() => {
     for (let index = 0; index < 105; index++)
@@ -270,7 +283,7 @@ it('keeps the newest 100 applied live records per user and ignores obsolete requ
 
 it('stops old callbacks, pending snapshots, row applies and refreshes on session abort', async () => {
   const { result, controller, client, socket, session, connect } = setup();
-  const pending = deferred<UserRow[]>();
+  const pending = deferred<UsersPage>();
   client.users.mockReturnValueOnce(pending.promise);
   // Taken before the abort unregisters them: a late frame can still call them.
   const [oldUpdate] = socket.listeners['rate:update'];
@@ -286,7 +299,7 @@ it('stops old callbacks, pending snapshots, row applies and refreshes on session
     held.applyRow(requestUpdate.row);
     held.refresh();
   });
-  await act(async () => pending.resolve(users));
+  await act(async () => pending.resolve(pageOf(users)));
   await advanceTime(30_000);
 
   expect(result.current).toBe(held);
@@ -320,6 +333,169 @@ it('keeps a fixed clock but advances the panel refresh signal', async () => {
   expect(result.current.tick).toBe(initialTick + 3);
   expect(result.current.now).toBe(Date.parse(NOW));
   expect(client.users).toHaveBeenCalledTimes(4);
+});
+
+const heldUserIds = (rows: ReadonlyMap<string, unknown>) => [...rows.keys()];
+
+it('a new page keeps the socket, drops the old page and its late response, and keeps the selected user', async () => {
+  const { result, client, connect, rerender } = setup('user-01');
+  await connect();
+  const oldPage = deferred<UsersPage>();
+  client.users
+    .mockReturnValueOnce(oldPage.promise)
+    .mockResolvedValueOnce(pageOf([users[1]], { page: 2 }));
+  act(() => result.current.refresh());
+  const oldSignal = client.users.mock.calls[1][1];
+
+  rerender({ query: SECOND_PAGE, selected: 'user-01' });
+  expect(oldSignal?.aborted).toBe(true);
+  expect(result.current.page).toBeNull();
+  expect(heldUserIds(result.current.rows)).toEqual(['user-01']);
+
+  await act(async () => oldPage.resolve(pageOf(users)));
+  expect(client.users).toHaveBeenLastCalledWith(
+    SECOND_PAGE,
+    expect.any(AbortSignal),
+  );
+  expect(result.current.page?.page).toBe(2);
+  expect(heldUserIds(result.current.rows).sort()).toEqual([
+    'user-01',
+    'user-02',
+  ]);
+  expect(openSocket).toHaveBeenCalledOnce();
+
+  rerender({ query: SECOND_PAGE, selected: null });
+  expect(heldUserIds(result.current.rows)).toEqual(['user-02']);
+});
+
+it('applies the events that arrive during a page read over its response', async () => {
+  const { result, client, connect, rerender, emitUpdate } = setup();
+  await connect();
+  const read = deferred<UsersPage>();
+  client.users.mockReturnValueOnce(read.promise);
+  rerender({ query: SECOND_PAGE, selected: null });
+
+  // user-01 is on no held page yet; the response then carries version 12.
+  act(() => emitUpdate(requestUpdate));
+  await act(async () => read.resolve(pageOf(users, { page: 2 })));
+
+  expect(result.current.rows.get('user-01')).toBe(requestUpdate.row);
+  expect(client.users).toHaveBeenCalledTimes(2);
+});
+
+/** Events from `count` users who are on no page the tests read. */
+function otherUsersUpdate(count: number, prefix = 'other') {
+  return Array.from({ length: count }, (_, index) => ({
+    ...requestUpdate,
+    row: { ...requestUpdate.row, userId: `${prefix}-${index}` },
+  }));
+}
+
+it('never reads because of events, however many users send them during reads', async () => {
+  const { result, client, connect, emitUpdate } = setup();
+  const firstRead = deferred<UsersPage>();
+  const secondRead = deferred<UsersPage>();
+  client.users
+    .mockReturnValueOnce(firstRead.promise)
+    .mockReturnValueOnce(secondRead.promise);
+  await connect();
+
+  act(() => otherUsersUpdate(101, 'first').forEach(emitUpdate));
+  await act(async () => firstRead.resolve(pageOf(users)));
+  expect(client.users).toHaveBeenCalledOnce();
+
+  act(() => result.current.refresh());
+  act(() => otherUsersUpdate(101, 'second').forEach(emitUpdate));
+  await act(async () => secondRead.resolve(pageOf(users)));
+  expect(client.users).toHaveBeenCalledTimes(2);
+});
+
+it('applies an on-page event over a reconcile that many off-page users sent events during', async () => {
+  const { result, client, connect, emitUpdate } = setup();
+  await connect();
+  const read = deferred<UsersPage>();
+  client.users.mockReturnValueOnce(read.promise);
+  act(() => result.current.refresh());
+
+  act(() => {
+    otherUsersUpdate(101).forEach(emitUpdate);
+    emitUpdate(requestUpdate);
+  });
+  await act(async () => read.resolve(pageOf(users)));
+
+  expect(result.current.rows.get('user-01')).toBe(requestUpdate.row);
+  expect(client.users).toHaveBeenCalledTimes(2);
+});
+
+it("shows the response row of a user past the cap on a new page until the user's next event", async () => {
+  const { result, client, connect, rerender, emitUpdate } = setup();
+  await connect();
+  const read = deferred<UsersPage>();
+  client.users.mockReturnValueOnce(read.promise);
+  rerender({ query: SECOND_PAGE, selected: null });
+
+  // The cap is full before user-01's event arrives, so that event is dropped.
+  act(() => {
+    otherUsersUpdate(100).forEach(emitUpdate);
+    emitUpdate(requestUpdate);
+  });
+  await act(async () => read.resolve(pageOf(users, { page: 2 })));
+  expect(result.current.rows.get('user-01')).toBe(users[0]);
+  expect(client.users).toHaveBeenCalledTimes(2);
+
+  const nextEvent = numberedRequest(0);
+  act(() => emitUpdate(nextEvent));
+  expect(result.current.rows.get('user-01')).toBe(nextEvent.row);
+});
+
+it('keeps nothing of an event off the page, but still alerts', async () => {
+  const { result, client, connect, onLimitExceeded, emitUpdate, emitExceeded } =
+    setup('user-01');
+  client.users.mockResolvedValue(pageOf(users.slice(0, 2)));
+  await connect();
+  const heldRows = result.current.rows;
+
+  act(() => {
+    for (let index = 0; index < 1000; index++) {
+      const userId = `other-${index}`;
+      emitUpdate({ ...requestUpdate, row: { ...requestUpdate.row, userId } });
+    }
+    emitExceeded(limitExceeded);
+  });
+
+  expect(result.current.rows).toBe(heldRows);
+  expect(result.current.liveRecords.size).toBe(0);
+  expect(onLimitExceeded).toHaveBeenCalledExactlyOnceWith(limitExceeded);
+  expect(client.users).toHaveBeenCalledTimes(1);
+});
+
+// user-09's suspension ends without a new version, so only a response that
+// may replace an equal row can show that.
+const suspended = users[8];
+const suspensionEnded = { ...suspended, suspendedUntil: null };
+
+it('repairs the selected user off the page from an equal detail response, never an older one', async () => {
+  const { result, client, connect } = setup('user-09');
+  client.users.mockResolvedValue(pageOf([users[0]]));
+  await connect();
+  act(() => result.current.applyDetailRow(suspended));
+
+  const older = { ...suspensionEnded, version: suspended.version - 1 };
+  act(() => result.current.applyDetailRow(older));
+  expect(result.current.rows.get('user-09')).toBe(suspended);
+
+  act(() => result.current.applyDetailRow(suspensionEnded));
+  expect(result.current.rows.get('user-09')).toBe(suspensionEnded);
+});
+
+it('leaves a row on the page to the page read, even for an equal detail response', async () => {
+  const { result, client, connect } = setup('user-09');
+  client.users.mockResolvedValue(pageOf([suspended]));
+  await connect();
+
+  act(() => result.current.applyDetailRow(suspensionEnded));
+
+  expect(result.current.rows.get('user-09')).toBe(suspended);
 });
 
 // One bad frame must not put an invalid row (unknown status, unreadable time)

@@ -1,10 +1,13 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { UserRow } from '@app/contracts';
 import { NOW, RESET_AT, users } from '../fixtures/index.ts';
+import { usersPage } from '../fixtures/usersPage.ts';
 import { useLiveUsers } from '../live/useLiveUsers.ts';
 import { useRequest } from '../lib/useRequest.ts';
 import type { Session } from './useSession.ts';
 import { clock, createClient, openSocket } from './fixture-client.ts';
+import { DEFAULT_USERS_QUERY } from './usersQuery.ts';
 
 vi.mock('./index.ts', async () => {
   const fixtures = await import('./fixture-client.ts');
@@ -34,7 +37,7 @@ function fixtureClient(signal = new AbortController().signal) {
 
 /** The hooks of a dashboard that has user-09's detail panel open. */
 function usePanels(session: Session) {
-  const live = useLiveUsers(session);
+  const live = useLiveUsers(session, DEFAULT_USERS_QUERY, 'user-09');
   const detail = useRequest(
     'detail:user-09',
     (signal) => session.client.detail('user-09', signal),
@@ -117,7 +120,7 @@ it('fixture requests stop for either request or session cancellation', async () 
   const request = new AbortController();
   const client = fixtureClient(session.signal);
 
-  const read = client.users(request.signal);
+  const read = client.users(DEFAULT_USERS_QUERY, request.signal);
   const readRejected = expect(read).rejects.toMatchObject({
     name: 'AbortError',
   });
@@ -152,4 +155,65 @@ it('the fixture socket emits its three events once and disconnect cancels delive
   cancelled.disconnect();
   await vi.advanceTimersByTimeAsync(10_000);
   expect(connect).toHaveBeenCalledOnce();
+});
+
+const now = Date.parse(NOW);
+const userIds = (rows: UserRow[]) => rows.map((row) => row.userId);
+const matchingIds = (changes: Partial<typeof DEFAULT_USERS_QUERY>) =>
+  userIds(usersPage(users, { ...DEFAULT_USERS_QUERY, ...changes }, now).rows);
+
+it('filters by plain user ID, server status and recent activity', () => {
+  expect(
+    matchingIds({ search: 'USER-04', status: 'Warning', active: '5m' }),
+  ).toEqual(['user-04']);
+  expect(matchingIds({ status: 'OK' })).toEqual([
+    'user-01',
+    'user-02',
+    'user-03',
+    'user-10',
+    'user-12',
+  ]);
+  expect(matchingIds({ status: 'Exceeded' })).toEqual([
+    'user-06',
+    'user-09',
+    'user-11',
+  ]);
+  expect(matchingIds({ active: '5m' })).toEqual([
+    'user-01',
+    'user-02',
+    'user-03',
+    'user-04',
+    'user-05',
+    'user-06',
+    'user-07',
+    'user-08',
+    'user-09',
+  ]);
+});
+
+it('orders user IDs by plain strings regardless of locale collation', () => {
+  const mixed = ['user_1', 'user-a', 'user-A', 'user-2'].map((userId) => ({
+    ...users[0],
+    userId,
+  }));
+
+  const page = usersPage(mixed, DEFAULT_USERS_QUERY, now);
+
+  expect(userIds(page.rows)).toEqual(['user-2', 'user-A', 'user-a', 'user_1']);
+});
+
+it('the fixture client filters every row before it cuts the page', async () => {
+  const client = fixtureClient();
+
+  const read = client.users({
+    ...DEFAULT_USERS_QUERY,
+    search: 'user-0',
+    page: 2,
+    pageSize: 2,
+  });
+  await vi.advanceTimersByTimeAsync(150);
+
+  const page = await read;
+  expect(userIds(page.rows)).toEqual(['user-03', 'user-04']);
+  expect(page).toMatchObject({ total: 9, page: 2, pageSize: 2 });
 });

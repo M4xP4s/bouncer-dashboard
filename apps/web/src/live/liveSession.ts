@@ -3,10 +3,13 @@ import type {
   RateUpdateEvent,
   RequestRecord,
   UserRow,
+  UsersPage,
+  UsersQuery,
 } from '@app/contracts';
 import { clock, openSocket } from '../api/index.ts';
 import { listen, type LiveSocket, type SocketEvents } from '../api/socket.ts';
 import type { Session } from '../api/useSession.ts';
+import { sameQuery } from '../api/usersQuery.ts';
 import { isLimitExceeded, isRateUpdate } from '../api/validation.ts';
 import { oneAtATime, toError } from '../lib/async.ts';
 import { latestRequests } from '../lib/latestRequests.ts';
@@ -15,16 +18,18 @@ import { applyRow, applySnapshot, type Rows } from './rows.ts';
 
 export type Connection = 'connecting' | 'live' | 'disconnected';
 
-export interface SnapshotState {
-  status: 'pending' | 'loaded' | 'error';
-  error: Error | null;
-}
+export type SnapshotState =
+  | { status: 'pending' | 'loaded'; error: null }
+  | { status: 'error'; error: Error };
 
 type LiveRecords = ReadonlyMap<string, readonly RequestRecord[]>;
 
 export interface LiveState {
+  /** The rows of the page on screen and of the selected user. */
   rows: Rows;
-  /** Per user, the requests that events carried since the page opened. */
+  /** Null while the read of a new page or filter runs. */
+  page: UsersPage | null;
+  /** The requests that events carried for the selected user. */
   liveRecords: LiveRecords;
   lastUpdateAt: string | null;
   connection: Connection;
@@ -35,20 +40,32 @@ export interface LiveState {
   tick: number;
 }
 
+/** The page asked for and the user whose detail is open. */
+export interface LiveView {
+  query: UsersQuery;
+  selected: string | null;
+}
+
 export interface LiveSession {
   /** Applies the row of an HTTP response under the same ordering as events. */
   applyRow(row: UserRow): void;
+  /** Applies the row of the selected user's detail response. */
+  applyDetailRow(row: UserRow): void;
+  show(view: LiveView): void;
   refresh(): void;
   stop(): void;
 }
 
 type OnState = (state: LiveState) => void;
 type OnLimitExceeded = (event: RateLimitExceededEvent) => void;
+type LiveEvent = RateUpdateEvent | RateLimitExceededEvent;
 
 const SNAPSHOT_INTERVAL_MS = 10 * SECOND_MS;
+const PENDING_USERS_MAX = 100;
 
 export const initialState = (): LiveState => ({
   rows: new Map(),
+  page: null,
   liveRecords: new Map(),
   lastUpdateAt: null,
   connection: 'connecting',
@@ -98,6 +115,52 @@ function resetAlarm(onReset: () => void) {
   return { aim, cancel: () => clearTimeout(timer) };
 }
 
+/**
+ * Keeps the rows that events carry while a page not yet known is read, the
+ * newest per user, to apply over the response. A user past the cap is
+ * dropped: their next event or the next reconciliation repairs the row.
+ */
+class EventBuffer {
+  private rows: Rows | null = null;
+
+  open(): void {
+    this.rows = new Map();
+  }
+
+  add(row: UserRow): void {
+    if (!this.rows) return;
+    const buffered = applyRow(this.rows, row);
+    if (buffered.size <= PENDING_USERS_MAX) this.rows = buffered;
+  }
+
+  close(): Rows {
+    const taken = this.rows ?? new Map();
+    this.rows = null;
+    return taken;
+  }
+}
+
+/** The entries of the given users only; the same map when none is dropped. */
+function onlyUsers<T>(
+  entries: ReadonlyMap<string, T>,
+  userIds: ReadonlySet<string>,
+): ReadonlyMap<string, T> {
+  const kept = [...entries].filter(([userId]) => userIds.has(userId));
+  return kept.length === entries.size ? entries : new Map(kept);
+}
+
+function applyRowsOf(
+  rows: Rows,
+  candidates: Rows,
+  userIds: ReadonlySet<string>,
+): Rows {
+  let applied = rows;
+  for (const row of candidates.values()) {
+    if (userIds.has(row.userId)) applied = applyRow(applied, row);
+  }
+  return applied;
+}
+
 function withRequest(
   records: LiveRecords,
   userId: string,
@@ -114,15 +177,21 @@ function withRequest(
  */
 export function startLiveSession(
   session: Session,
+  initialView: LiveView,
   onState: OnState,
   onLimitExceeded: OnLimitExceeded,
 ): LiveSession {
-  return new SocketSession(session, onState, onLimitExceeded);
+  return new SocketSession(session, initialView, onState, onLimitExceeded);
 }
 
 class SocketSession implements LiveSession {
   private held = initialState();
   private stopped = false;
+  private view: LiveView;
+  // Rises with every new page or filter; a read of an older one is dropped.
+  private generation = 0;
+  private pageRead: AbortController | null = null;
+  private readonly pending = new EventBuffer();
   private readonly session: Session;
   private readonly onState: OnState;
   private readonly onLimitExceeded: OnLimitExceeded;
@@ -134,10 +203,12 @@ class SocketSession implements LiveSession {
 
   constructor(
     session: Session,
+    initialView: LiveView,
     onState: OnState,
     onLimitExceeded: OnLimitExceeded,
   ) {
     this.session = session;
+    this.view = initialView;
     this.onState = onState;
     this.onLimitExceeded = onLimitExceeded;
     this.socket = openSocket(session.token);
@@ -151,10 +222,31 @@ class SocketSession implements LiveSession {
   }
 
   applyRow(row: UserRow): void {
-    const rows = this.rowsWith(row);
-    if (!rows) return;
-    this.publish({ rows });
-    this.alarm.aim(rows);
+    if (this.isHeld(row.userId)) this.publishRows(this.rowsWith(row));
+  }
+
+  // No page read covers a selected user who is off the page, so the detail
+  // response repairs an equal row the way a snapshot does.
+  applyDetailRow(row: UserRow): void {
+    if (!this.active()) return;
+    if (this.isOnPage(row.userId) || row.userId !== this.view.selected) {
+      this.applyRow(row);
+      return;
+    }
+    const rows = applySnapshot(this.held.rows, [row]);
+    if (rows !== this.held.rows) this.publishRows(rows);
+  }
+
+  show(next: LiveView): void {
+    if (!this.active()) return;
+    const queryChanged = !sameQuery(this.view.query, next.query);
+    const selectionChanged = next.selected !== this.view.selected;
+    this.view = next;
+    if (queryChanged) {
+      this.startNewPage();
+      return;
+    }
+    if (selectionChanged) this.publish(this.heldFor(this.held.page));
   }
 
   refresh(): void {
@@ -169,6 +261,7 @@ class SocketSession implements LiveSession {
   readonly stop = (): void => {
     if (this.stopped) return;
     this.stopped = true;
+    this.pageRead?.abort();
     this.alarm.cancel();
     clearInterval(this.interval);
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
@@ -187,31 +280,90 @@ class SocketSession implements LiveSession {
     return !this.stopped && !this.session.signal.aborted;
   }
 
+  private isCurrent(readGeneration: number): boolean {
+    return this.active() && readGeneration === this.generation;
+  }
+
   private publish(change: Partial<LiveState>): void {
     this.held = { ...this.held, ...change };
     this.onState(this.held);
+  }
+
+  private publishRows(rows: Rows | null): void {
+    if (!rows) return;
+    this.publish({ rows });
+    this.alarm.aim(rows);
   }
 
   private refreshIfVisible(): void {
     if (pageVisible()) this.refresh();
   }
 
+  /** The users whose rows are held: those on `page` and the selected one. */
+  private heldUserIds(page: UsersPage | null): ReadonlySet<string> {
+    const userIds = new Set(page?.rows.map((row) => row.userId));
+    if (this.view.selected !== null) userIds.add(this.view.selected);
+    return userIds;
+  }
+
+  private isHeld(userId: string): boolean {
+    return this.held.rows.has(userId) || userId === this.view.selected;
+  }
+
+  private isOnPage(userId: string): boolean {
+    return this.held.page?.rows.some((row) => row.userId === userId) ?? false;
+  }
+
+  private heldFor(page: UsersPage | null) {
+    const { selected } = this.view;
+    const selectedIds = new Set(selected === null ? [] : [selected]);
+    const rows = onlyUsers(this.held.rows, this.heldUserIds(page));
+    const liveRecords = onlyUsers(this.held.liveRecords, selectedIds);
+    return { rows, liveRecords };
+  }
+
+  // A new page or filter keeps the socket and cancels the read in flight.
+  private startNewPage(): void {
+    this.generation += 1;
+    this.pageRead?.abort();
+    this.publish({
+      ...this.heldFor(null),
+      page: null,
+      snapshot: { status: 'pending', error: null },
+    });
+    this.loadSnapshot();
+  }
+
   private async fetchSnapshot(): Promise<void> {
     if (!this.active()) return;
+    const readGeneration = this.generation;
+    const controller = new AbortController();
+    this.pageRead = controller;
+    this.pending.open();
     try {
-      const rows = await this.session.client.users();
-      if (!this.active()) return;
-      this.publish({
-        rows: applySnapshot(this.held.rows, rows),
-        lastUpdateAt: new Date(clock()).toISOString(),
-        snapshot: { status: 'loaded', error: null },
-      });
-      this.alarm.aim(this.held.rows);
+      const { query } = this.view;
+      const page = await this.session.client.users(query, controller.signal);
+      const buffered = this.pending.close();
+      if (this.isCurrent(readGeneration)) this.showPage(page, buffered);
     } catch (thrown) {
-      if (!this.active()) return;
+      this.pending.close();
+      if (!this.isCurrent(readGeneration)) return;
       const error = toError(thrown, 'The snapshot failed.');
       this.publish({ snapshot: { status: 'error', error } });
     }
+  }
+
+  private showPage(page: UsersPage, buffered: Rows): void {
+    const userIds = this.heldUserIds(page);
+    const kept = onlyUsers(this.held.rows, userIds);
+    const rows = applyRowsOf(applySnapshot(kept, page.rows), buffered, userIds);
+    this.publish({
+      rows,
+      page,
+      lastUpdateAt: new Date(clock()).toISOString(),
+      snapshot: { status: 'loaded', error: null },
+    });
+    this.alarm.aim(rows);
   }
 
   /** The rows with `row` applied, or null when the held row is not older. */
@@ -221,16 +373,22 @@ class SocketSession implements LiveSession {
     return rows === this.held.rows ? null : rows;
   }
 
+  private recordsWith(event: LiveEvent): LiveRecords {
+    const { userId } = event.row;
+    if (userId !== this.view.selected) return this.held.liveRecords;
+    return withRequest(this.held.liveRecords, userId, event.request);
+  }
+
   /** Returns false when the event is dropped whole: its row is not newer. */
-  private applyEvent(event: RateUpdateEvent | RateLimitExceededEvent): boolean {
+  private applyEvent(event: LiveEvent): boolean {
+    if (!this.active()) return false;
+    // A known page's rows are held, so its events are already applied.
+    if (this.held.page === null) this.pending.add(event.row);
+    // Off the page: nothing is kept, but the alert still shows.
+    if (!this.isHeld(event.row.userId)) return true;
     const rows = this.rowsWith(event.row);
     if (!rows) return false;
-    const { userId } = event.row;
-    const liveRecords = withRequest(
-      this.held.liveRecords,
-      userId,
-      event.request,
-    );
+    const liveRecords = this.recordsWith(event);
     this.publish({ rows, liveRecords, lastUpdateAt: event.at });
     this.alarm.aim(rows);
     return true;

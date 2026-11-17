@@ -8,19 +8,16 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import { useState } from 'react';
-import type { Status, UserRow } from '@app/contracts';
-import { STATUSES } from '../../api/validation.ts';
-import { suspensionEnd, type Rows } from '../../live/rows.ts';
-import type { SnapshotState } from '../../live/useLiveUsers.ts';
+import { useEffect } from 'react';
+import type { Status, UserRow, UsersPage, UsersQuery } from '@app/contracts';
 import {
-  DAY_MS,
-  HOUR_MS,
-  MINUTE_MS,
-  minutesUntil,
-  utcTime,
-} from '../../lib/time.ts';
-import { ANY, filterUsers } from './filterUsers.ts';
+  FIRST_PAGE,
+  SEARCH_MAX_LENGTH,
+  lastPage,
+} from '../../api/usersQuery.ts';
+import { pageRows, suspensionEnd, type Rows } from '../../live/rows.ts';
+import type { SnapshotState } from '../../live/useLiveUsers.ts';
+import { minutesUntil, utcTime } from '../../lib/time.ts';
 
 const STATUS_COLOR = {
   OK: 'green',
@@ -28,89 +25,176 @@ const STATUS_COLOR = {
   Exceeded: 'red',
 } satisfies Record<Status, string>;
 
-const STATUS_OPTIONS = [{ value: ANY, label: 'Any' }, ...STATUSES];
-
-// A Select holds strings, so each period is its length in milliseconds.
-const ACTIVE_OPTIONS = [
-  { value: ANY, label: 'Any time' },
-  { value: String(5 * MINUTE_MS), label: 'Last 5 minutes' },
-  { value: String(HOUR_MS), label: 'Last hour' },
-  { value: String(DAY_MS), label: 'Last 24 hours' },
-];
-
-interface Filters {
-  search: string;
-  status: string;
-  activePeriodMs: string;
+interface Option<T extends string> {
+  value: T;
+  label: string;
 }
 
-const NO_FILTERS: Filters = { search: '', status: ANY, activePeriodMs: ANY };
+const STATUS_OPTIONS: Option<UsersQuery['status']>[] = [
+  { value: 'any', label: 'Any' },
+  { value: 'OK', label: 'OK' },
+  { value: 'Warning', label: 'Warning' },
+  { value: 'Exceeded', label: 'Exceeded' },
+];
+
+const ACTIVE_OPTIONS: Option<UsersQuery['active']>[] = [
+  { value: 'any', label: 'Any time' },
+  { value: '5m', label: 'Last 5 minutes' },
+  { value: '1h', label: 'Last hour' },
+  { value: '24h', label: 'Last 24 hours' },
+];
+
+const PAGE_SIZE_OPTIONS = ['25', '50', '100'];
+
+/** The typed value of the option a Select reports as a plain string. */
+const chosen = <T extends string>(
+  options: Option<T>[],
+  value: string | null,
+): T => (options.find((option) => option.value === value) ?? options[0]).value;
 
 export function UsersTable({
   rows,
+  page,
+  query,
+  onQuery,
   snapshot,
   now,
   onSelect,
 }: {
   rows: Rows;
+  page: UsersPage | null;
+  query: UsersQuery;
+  onQuery: (query: UsersQuery) => void;
   snapshot: SnapshotState;
   now: number;
   onSelect: (id: string) => void;
 }) {
-  const [filters, setFilters] = useState(NO_FILTERS);
-  const { search, status, activePeriodMs } = filters;
-  const users = [...rows.values()];
-  const filtered = filterUsers(users, search, status, activePeriodMs, now);
-  const noMatch = snapshot.status === 'loaded' && filtered.length === 0;
+  const shown = pageRows(page, rows);
+  const noMatch = snapshot.status === 'loaded' && shown.length === 0;
+
+  // Users can leave a filtered list between two reads, so the page asked
+  // for can end up past the last.
+  useEffect(() => {
+    if (page && page.page > lastPage(page)) {
+      onQuery({ ...query, page: FIRST_PAGE });
+    }
+  }, [page, query, onQuery]);
+
   return (
     <>
-      <UserFilters filters={filters} onChange={setFilters} />
+      <UserFilters query={query} onQuery={onQuery} />
+      <PageControls query={query} page={page} onQuery={onQuery} />
       {snapshot.status === 'pending' && <Text>Loading users…</Text>}
       {snapshot.status === 'error' && (
         <Alert color="red">
-          Could not load users: {snapshot.error?.message}
+          Could not load users: {snapshot.error.message}
         </Alert>
       )}
       {noMatch && <Text>No users match the filters.</Text>}
-      {filtered.length > 0 && (
-        <UserRowsTable rows={filtered} now={now} onSelect={onSelect} />
+      {shown.length > 0 && (
+        <UserRowsTable rows={shown} now={now} onSelect={onSelect} />
       )}
     </>
   );
 }
 
 function UserFilters({
-  filters,
-  onChange,
+  query,
+  onQuery,
 }: {
-  filters: Filters;
-  onChange: (filters: Filters) => void;
+  query: UsersQuery;
+  onQuery: (query: UsersQuery) => void;
 }) {
+  const firstPageWith = (change: Partial<UsersQuery>) =>
+    onQuery({ ...query, ...change, page: FIRST_PAGE });
   return (
     <Group mb="md" align="end">
       <TextInput
         label="Search user ID"
-        value={filters.search}
+        value={query.search}
+        maxLength={SEARCH_MAX_LENGTH}
         onChange={(event) =>
-          onChange({ ...filters, search: event.currentTarget.value })
+          firstPageWith({ search: event.currentTarget.value })
         }
       />
       <Select
         label="Status"
-        value={filters.status}
-        onChange={(value) => onChange({ ...filters, status: value ?? ANY })}
+        value={query.status}
+        onChange={(value) =>
+          firstPageWith({ status: chosen(STATUS_OPTIONS, value) })
+        }
         data={STATUS_OPTIONS}
         allowDeselect={false}
       />
       <Select
         label="Last active"
-        value={filters.activePeriodMs}
+        value={query.active}
         onChange={(value) =>
-          onChange({ ...filters, activePeriodMs: value ?? ANY })
+          firstPageWith({ active: chosen(ACTIVE_OPTIONS, value) })
         }
         data={ACTIVE_OPTIONS}
         allowDeselect={false}
       />
+      <Select
+        label="Users per page"
+        value={String(query.pageSize)}
+        onChange={(value) => firstPageWith({ pageSize: Number(value) })}
+        data={PAGE_SIZE_OPTIONS}
+        allowDeselect={false}
+      />
+    </Group>
+  );
+}
+
+const pageSummary = (page: UsersPage) =>
+  `Page ${page.page} of ${lastPage(page)} · ${page.total} matching users`;
+
+function PageControls({
+  query,
+  page,
+  onQuery,
+}: {
+  query: UsersQuery;
+  page: UsersPage | null;
+  onQuery: (query: UsersQuery) => void;
+}) {
+  // Until the page answers, its last page is unknown: only going back works.
+  const last = page ? lastPage(page) : query.page;
+  const onFirst = query.page === FIRST_PAGE;
+  const onLast = query.page >= last;
+  const goTo = (pageNumber: number) => onQuery({ ...query, page: pageNumber });
+  return (
+    <Group mb="md">
+      <Button
+        variant="default"
+        disabled={onFirst}
+        onClick={() => goTo(FIRST_PAGE)}
+      >
+        First page
+      </Button>
+      <Button
+        variant="default"
+        disabled={onFirst}
+        onClick={() => goTo(query.page - 1)}
+      >
+        Previous page
+      </Button>
+      <Button
+        variant="default"
+        disabled={onLast}
+        onClick={() => goTo(query.page + 1)}
+      >
+        Next page
+      </Button>
+      <Button variant="default" disabled={onLast} onClick={() => goTo(last)}>
+        Last page
+      </Button>
+      {page && (
+        <>
+          <Text>{pageSummary(page)}</Text>
+          <Text size="xs">Updated {utcTime(page.completedAt)}</Text>
+        </>
+      )}
     </Group>
   );
 }

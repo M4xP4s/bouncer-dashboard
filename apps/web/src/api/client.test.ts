@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { users } from '../fixtures/index.ts';
-import { deferred } from '../lib/test-helpers.ts';
+import { deferred, pageOf } from '../lib/test-helpers.ts';
 import { createClient, type Client, type ClientOptions } from './client.ts';
+import { DEFAULT_USERS_QUERY } from './usersQuery.ts';
 import { HttpError, request } from './http.ts';
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -58,7 +59,7 @@ it('reports an active 401 once, preserving the server message', async () => {
   const onRefused = vi.fn();
   const client = adminClient({ onRefused });
 
-  await expect(client.users()).rejects.toMatchObject({
+  await expect(client.users(DEFAULT_USERS_QUERY)).rejects.toMatchObject({
     status: 401,
     message: 'Not accepted',
   });
@@ -80,7 +81,10 @@ it.each(['session', 'request'] as const)(
       onRefused,
     });
 
-    const result = client.users(controllers.request.signal);
+    const result = client.users(
+      DEFAULT_USERS_QUERY,
+      controllers.request.signal,
+    );
     const rejected = expect(result).rejects.toMatchObject({
       name: 'AbortError',
     });
@@ -94,20 +98,20 @@ it.each(['session', 'request'] as const)(
 
 it('drops a response aborted while its JSON body was still being read', async () => {
   const body = deferred<unknown>();
-  const usersResponse = response(users);
+  const usersResponse = response(pageOf(users));
   vi.spyOn(usersResponse, 'json').mockReturnValue(body.promise);
   fetchMock.mockResolvedValue(usersResponse);
   const session = new AbortController();
   const client = adminClient({ signal: session.signal });
 
-  const result = client.users();
+  const result = client.users(DEFAULT_USERS_QUERY);
   const rejected = expect(result).rejects.toMatchObject({
     name: 'AbortError',
   });
   // One turn lets fetch settle, so the abort lands while the body is read.
   await Promise.resolve();
   session.abort();
-  body.resolve(users);
+  body.resolve(pageOf(users));
 
   await rejected;
 });
@@ -149,8 +153,20 @@ it.each<[string, (pending: PendingResponse) => void]>([
 it('rejects a malformed successful body instead of trusting its TypeScript type', async () => {
   fetchMock.mockResolvedValue(response([{ userId: 'bad' }]));
 
-  await expect(adminClient().users()).rejects.toMatchObject({
+  await expect(adminClient().users(DEFAULT_USERS_QUERY)).rejects.toMatchObject({
     name: 'HttpError',
+    message: 'The server returned an invalid response.',
+  });
+});
+
+it.each([
+  ['more rows than its size', pageOf(users, { pageSize: 2 })],
+  ['no read interval', { ...pageOf(users), completedAt: undefined }],
+  ['page 0', pageOf(users, { page: 0 })],
+])('rejects a page with %s', async (_problem, body) => {
+  fetchMock.mockResolvedValue(response(body));
+
+  await expect(adminClient().users(DEFAULT_USERS_QUERY)).rejects.toMatchObject({
     message: 'The server returned an invalid response.',
   });
 });
@@ -160,7 +176,9 @@ it('still handles a 401 whose error body is not JSON', async () => {
   const onRefused = vi.fn();
   const client = adminClient({ onRefused });
 
-  await expect(client.users()).rejects.toMatchObject({ status: 401 });
+  await expect(client.users(DEFAULT_USERS_QUERY)).rejects.toMatchObject({
+    status: 401,
+  });
   expect(onRefused).toHaveBeenCalledOnce();
 });
 
@@ -225,6 +243,20 @@ interface RouteCase {
 // The API rejects a wrong path, verb or body (404, 405 or 400), and no test
 // that mocks the client itself can see that.
 const routes: Record<string, RouteCase> = {
+  users: {
+    call: (client) =>
+      client.users({
+        page: 2,
+        pageSize: 25,
+        search: 'a&b c',
+        status: 'Warning',
+        active: '1h',
+      }),
+    responseBody: pageOf([], { page: 2, pageSize: 25 }),
+    method: 'GET',
+    path: '/api/admin/users?page=2&pageSize=25&search=a%26b+c&status=Warning&active=1h',
+    sentBody: undefined,
+  },
   history: {
     call: (client) => client.history('user-01', 'day'),
     responseBody: [],

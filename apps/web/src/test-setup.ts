@@ -23,3 +23,6 @@ globalThis.ResizeObserver ??= class ResizeObserver {
   unobserve() {}
   disconnect() {}
 };
+
+// Mantine scrolls to the selected option; jsdom has no layout to scroll.
+HTMLElement.prototype.scrollIntoView ??= () => {};

@@ -19,6 +19,7 @@ function renderForms() {
   };
   const live: LiveUsers = {
     rows: new Map(),
+    page: null,
     liveRecords: new Map(),
     connection: 'live',
     lastUpdateAt: null,
@@ -26,6 +27,7 @@ function renderForms() {
     now: 0,
     tick: 0,
     applyRow: vi.fn(),
+    applyDetailRow: vi.fn(),
     refresh: vi.fn(),
   };
   render(<AdminForms userId="user-01" session={session} live={live} />, {

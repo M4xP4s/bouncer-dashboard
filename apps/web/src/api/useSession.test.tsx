@@ -9,12 +9,13 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AdminForms } from '../features/admin/AdminForms.tsx';
-import { analytics, NOW, users } from '../fixtures/index.ts';
-import { deferred, mockSocket } from '../lib/test-helpers.ts';
+import { analytics, users } from '../fixtures/index.ts';
+import { deferred, mockSocket, pageOf } from '../lib/test-helpers.ts';
 import { useRequest } from '../lib/useRequest.ts';
 import { useLiveUsers, type LiveUsers } from '../live/useLiveUsers.ts';
 import { createClient, openSocket } from './index.ts';
 import { useSession, type Session } from './useSession.ts';
+import { DEFAULT_USERS_QUERY } from './usersQuery.ts';
 
 vi.mock('./index.ts', async () => {
   const real = await import('./client.ts');
@@ -74,7 +75,7 @@ function SessionHost({
 }
 
 function Panels({ session }: { session: Session }) {
-  const live = useLiveUsers(session);
+  const live = useLiveUsers(session, DEFAULT_USERS_QUERY, null);
   const detail = useRequest(
     'detail:user-01',
     (signal) => session.client.detail('user-01', signal),
@@ -118,6 +119,7 @@ function FormsHost({
 function mockLive(): LiveUsers {
   return {
     rows: new Map(),
+    page: null,
     liveRecords: new Map(),
     connection: 'live',
     lastUpdateAt: null,
@@ -125,25 +127,20 @@ function mockLive(): LiveUsers {
     now: 0,
     tick: 0,
     applyRow: vi.fn(),
+    applyDetailRow: vi.fn(),
     refresh: vi.fn(),
   };
 }
+
+const USERS_PATH =
+  '/api/admin/users?page=1&pageSize=50&search=&status=any&active=any';
 
 /** The body for a path; its row ID and user count tell the tokens apart. */
 function body(path: string, owner: 'old' | 'new'): unknown {
   const row = { ...users[0], userId: `${owner}-row` };
   if (path.endsWith('/analytics'))
     return { ...analytics, totalUsers: owner === 'new' ? 42 : 99 };
-  if (path.endsWith('/users')) {
-    return {
-      rows: [row],
-      total: 1,
-      page: 1,
-      pageSize: 50,
-      startedAt: NOW,
-      completedAt: NOW,
-    };
-  }
+  if (path === USERS_PATH) return pageOf([row]);
   return { row, recentRequests: [] };
 }
 
@@ -189,8 +186,8 @@ it.each(['success', '401', 'failure'] as const)(
     const oldRequests = requestsSentWith('Bearer old');
     expect(oldRequests.map((request) => request.path).sort()).toEqual([
       '/api/admin/analytics',
-      '/api/admin/users',
       '/api/admin/users/user-01',
+      USERS_PATH,
     ]);
 
     view.rerender(<SessionHost key="new" token="new" onRefused={refuse} />);

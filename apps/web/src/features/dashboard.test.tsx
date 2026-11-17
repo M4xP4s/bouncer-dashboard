@@ -12,9 +12,9 @@ import { expect, it, vi } from 'vitest';
 import type { RequestRecord, UserDetail, UserRow } from '@app/contracts';
 import type { LiveUsers } from '../live/useLiveUsers.ts';
 import { NOW, users } from '../fixtures/index.ts';
-import { deferred, mockClient } from '../lib/test-helpers.ts';
+import { DEFAULT_USERS_QUERY } from '../api/usersQuery.ts';
+import { deferred, mockClient, pageOf } from '../lib/test-helpers.ts';
 import { UsersTable } from './table/UsersTable.tsx';
-import { filterUsers } from './table/filterUsers.ts';
 import { UserDrawer } from './detail/UserDetail.tsx';
 import { mergeRequests } from './detail/mergeRequests.ts';
 import { AdminForms } from './admin/AdminForms.tsx';
@@ -22,8 +22,6 @@ import { AnalyticsCards } from './analytics/AnalyticsCards.tsx';
 
 const now = Date.parse(NOW);
 const DAY_MS = 24 * 60 * 60 * 1000;
-// The value of the "Last 5 minutes" option, in milliseconds.
-const LAST_5_MINUTES = '300000';
 
 function setup() {
   const controller = new AbortController();
@@ -36,6 +34,7 @@ function setup() {
   };
   const live: LiveUsers = {
     rows: new Map(users.map((row) => [row.userId, row])),
+    page: pageOf(users),
     liveRecords: new Map(),
     connection: 'live',
     lastUpdateAt: NOW,
@@ -43,6 +42,7 @@ function setup() {
     now,
     tick: 0,
     applyRow: vi.fn(),
+    applyDetailRow: vi.fn(),
     refresh: vi.fn(),
   };
   // Keyed like the drawer's content: another user gets a fresh form.
@@ -73,47 +73,9 @@ const enter = (label: string, value: string) =>
 const recentRequests = () =>
   within(screen.getByRole('region', { name: 'Recent requests' }));
 
-const userIds = (rows: UserRow[]) => rows.map((row) => row.userId);
-
 function requestRecord(changes: Partial<RequestRecord>): RequestRecord {
   return { id: 'x', at: NOW, outcome: 'denied', remaining: 0, ...changes };
 }
-
-it('filters by plain user ID, server status and recent activity', () => {
-  expect(
-    userIds(filterUsers(users, 'USER-04', 'Warning', LAST_5_MINUTES, now)),
-  ).toEqual(['user-04']);
-  expect(userIds(filterUsers(users, '', 'Exceeded', 'any', now))).toEqual([
-    'user-06',
-    'user-09',
-    'user-11',
-  ]);
-  expect(userIds(filterUsers(users, '', 'any', LAST_5_MINUTES, now))).toEqual([
-    'user-01',
-    'user-02',
-    'user-03',
-    'user-04',
-    'user-05',
-    'user-06',
-    'user-07',
-    'user-08',
-    'user-09',
-  ]);
-});
-
-it('orders user IDs by plain strings regardless of locale collation', () => {
-  const mixed = ['user_1', 'user-a', 'user-A', 'user-2'].map((userId) => ({
-    ...users[0],
-    userId,
-  }));
-
-  expect(userIds(filterUsers(mixed, '', 'any', 'any', now))).toEqual([
-    'user-2',
-    'user-A',
-    'user-a',
-    'user_1',
-  ]);
-});
 
 it('keeps rows on snapshot failure, provides keyboard buttons and expires suspension', () => {
   const suspensionJustExpired: UserRow = {
@@ -125,6 +87,9 @@ it('keeps rows on snapshot failure, provides keyboard buttons and expires suspen
   renderInMantine(
     <UsersTable
       rows={new Map([['user-01', suspensionJustExpired]])}
+      page={pageOf([suspensionJustExpired])}
+      query={DEFAULT_USERS_QUERY}
+      onQuery={vi.fn()}
       snapshot={{ status: 'error', error: new Error('offline') }}
       now={now}
       onSelect={onSelect}
@@ -186,12 +151,14 @@ it('discards an old detail response on a user switch', async () => {
   const view = renderInMantine(userDrawer('user-01'));
 
   view.rerender(userDrawer('user-02'));
-  await waitFor(() => expect(live.applyRow).toHaveBeenCalledWith(users[1]));
+  await waitFor(() =>
+    expect(live.applyDetailRow).toHaveBeenCalledWith(users[1]),
+  );
   await act(async () =>
     oldDetail.resolve({ row: users[0], recentRequests: [] }),
   );
 
-  expect(live.applyRow).not.toHaveBeenCalledWith(users[0]);
+  expect(live.applyDetailRow).not.toHaveBeenCalledWith(users[0]);
   expect(screen.getByText(/Used 50/)).toBeTruthy();
 });
 

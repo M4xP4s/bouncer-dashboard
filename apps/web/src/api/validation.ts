@@ -24,7 +24,7 @@ const MAX_PERCENT = 100;
 const members = <T extends string>(all: Record<T, true>): readonly string[] =>
   Object.keys(all);
 
-export const STATUSES = members<Status>({
+const STATUSES = members<Status>({
   OK: true,
   Warning: true,
   Exceeded: true,
