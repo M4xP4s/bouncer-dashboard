@@ -43,16 +43,15 @@ function isRedisUrl(value: string): boolean {
   );
 }
 
-/** Why a DEMO_USERS entry cannot be added, or undefined when it can. */
+/** Why a DEMO_USERS pair cannot be added, or undefined when it can. */
 function demoUserProblem(
-  entry: string,
+  pair: string[],
   userIds: ReadonlySet<string>,
   userIdByToken: ReadonlyMap<string, string>,
   adminToken: string,
 ): string | undefined {
-  const parts = entry.split(':');
-  const [userId, token] = parts;
-  if (parts.length !== 2 || !USER_ID.test(userId) || !TOKEN.test(token)) {
+  const [userId, token] = pair;
+  if (pair.length !== 2 || !USER_ID.test(userId) || !TOKEN.test(token)) {
     return 'must be userId:token';
   }
   if (userIds.has(userId)) return 'repeats a user ID';
@@ -93,12 +92,13 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     problems.push('DEMO_USERS must list at least one userId:token pair');
   }
   entries.forEach((entry, index) => {
-    const [userId, token] = entry.split(':');
-    const problem = demoUserProblem(entry, userIds, userIdByToken, adminToken);
+    const pair = entry.split(':');
+    const problem = demoUserProblem(pair, userIds, userIdByToken, adminToken);
     if (problem) {
       problems.push(`DEMO_USERS entry ${index + 1} ${problem}`);
       return;
     }
+    const [userId, token] = pair;
     userIds.add(userId);
     userIdByToken.set(token, userId);
   });
