@@ -23,7 +23,8 @@ second time and they do not contradict it, so a change is made in one place.
 | Fact | Defined in |
 | --- | --- |
 | What was asked | [REQUIREMENTS.md](REQUIREMENTS.md) |
-| A known failure mode and the check that guards against it | [PITFALLS.md](PITFALLS.md) |
+| A failure mode and a short example of a check that would catch it | [PITFALLS.md](PITFALLS.md) |
+| Planned verification cases | **Test plan** in the owning specification |
 | A behavior rule, or the reading chosen for an ambiguous requirement | **Behavior** in the owning specification |
 | A decision, the alternatives considered and its cost | **Decisions** in the owning specification |
 | Routes, events and storage keys | **Interface** in the owning specification |
@@ -87,8 +88,9 @@ stable document that grows as the capability does.
 - **A specification is a milestone.** It ends in something a reviewer, human
   or agent, can verify without reading the code: a command and the output it
   must produce, or a screen and what it must show. Every behavior rule is
-  reachable from a test-plan case or a milestone step. A rule that nothing
-  can check is rewritten or removed.
+  reachable from a test-plan case or a milestone step. A rule is worded so
+  that it can be checked; required behavior that cannot yet be verified is
+  recorded as a gap, not dropped.
 - **Short.** Aim for 60 to 120 lines per capability. A section with nothing
   to say is left out. When a specification grows, remove implementation
   inventory before splitting it.
