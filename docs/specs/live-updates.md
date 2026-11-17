@@ -44,8 +44,11 @@ expectations.
    also replaces an equal row that differs, but only while that user is not
    on the page on screen. Otherwise the order, window then version, holds for
    every source. A row on the page is replaced only by a newer one or by the
-   page's snapshot (rule 8). A `rate:limit_exceeded` that is not newer is
-   dropped whole, alert included. (Core feature 1; Expectation: reliability)
+   page's snapshot (rule 8). The order decides the row and its request
+   record only. Every `rate:limit_exceeded` received shows its alert, whatever
+   row is held: a snapshot read after the rejection can arrive before the
+   event and already hold its version, and must not silence it.
+   (Core feature 1; Expectation: reliability)
 8. An event never causes a request. A snapshot (the page of the user list on
    screen, [admin-api](admin-api.md#interface)) replaces a held row unless the
    held one is newer, so it also replaces an equal row that differs, repairing
@@ -116,7 +119,10 @@ Arrival order does not say which row
 is newer, and a new hour changes a row with no event, so the window comes first.
 Only a snapshot, read with its version in one transaction, may replace an equal
 row. Last arrival wins undoes a newer event; cancelling a snapshot can starve
-the display. Cost: a read every 10 seconds per visible dashboard (unmeasured),
+the display. The alert is outside this order: it reports that a rejection
+happened, which no later row undoes, and dropping it with a row that is not
+newer loses the alert whenever a snapshot wins the race against the event.
+Cost: a read every 10 seconds per visible dashboard (unmeasured),
 and a stale row until the next successful snapshot for changes no event
 carries, including a filtered page whose members no longer match. A user past
 the 100 kept while a new page is read shows the page's row until their next
@@ -160,7 +166,7 @@ unreachable is lost. Cases: the delivery rows of the test plan.
 
 | Browser environment (`npm test`) | Cases |
 | --- | --- |
-| `apps/web/src/live/rows.test.ts`, `apps/web/src/live/useLiveUsers.test.tsx` | Order by window, then version; only a snapshot replaces an equal row; each snapshot trigger; one in flight, one merged follow-up; a newer event beats a slow snapshot; a failed snapshot keeps the rows; a stale alert is dropped; cleanup. A new page keeps the socket and drops the old page's response; events during a read are applied over it, and no number of them causes a read; a user past 100 keeps the response row until their next event; off-page events keep nothing; the selected user stays across pages; an equal-version detail response repairs the selected user off the page (an ended suspension), an older one arriving late does not, and an equal one does not replace an on-page row. |
+| `apps/web/src/live/rows.test.ts`, `apps/web/src/live/useLiveUsers.test.tsx` | Order by window, then version; only a snapshot replaces an equal row; each snapshot trigger; one in flight, one merged follow-up; a newer event beats a slow snapshot; a failed snapshot keeps the rows; an alert shows although a snapshot already holds its version or a newer row; cleanup. A new page keeps the socket and drops the old page's response; events during a read are applied over it, and no number of them causes a read; a user past 100 keeps the response row until their next event; off-page events keep nothing; the selected user stays across pages; an equal-version detail response repairs the selected user off the page (an ended suspension), an older one arriving late does not, and an equal one does not replace an on-page row. |
 | `apps/web/src/App.test.tsx`, `apps/web/src/assembled.test.tsx` | Connecting sets no update time; an event or a snapshot moves it. |
 
 | Real store ([how to run](rate-limiting.md#test-plan)) | Cases |
@@ -228,10 +234,12 @@ and the exit code is 0.
   traffic grows with the requests of all users.
 - Events are not stored, replayed or acknowledged; during a suspension every
   request sends an update, so volume has no bound there.
-- A repeated or stale `rate:limit_exceeded` for a user whose row is not held
-  has nothing to be compared with, so it can show the alert again. A held row
-  still drops it (rule 7), and the server sends one alert per generation
-  (rule 2); the dashboard keeps no record of alerts shown.
+- The dashboard shows the alert of every `rate:limit_exceeded` it receives
+  and keeps no record of alerts shown. The server sends one per generation
+  (rule 2) and replays nothing (rule 6), so the dashboard removes no
+  duplicate: an event delivered twice would alert twice. An alert that
+  arrives after a newer row, for example after a reset, still shows for its
+  5 seconds.
 
 [P1]: ../PITFALLS.md#p1-renaming-what-the-brief-names
 [P6]: ../PITFALLS.md#p6-rejections-that-multiply-work

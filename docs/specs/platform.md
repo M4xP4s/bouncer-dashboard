@@ -230,8 +230,9 @@ Unit, no Redis (`npm test`):
   peer that stops answering while commands keep arriving fails the command
   in flight within 5 s, also with the system time standing still; a peer
   that stops answering while the client is idle is cut off within 5 s; in
-  both cases the same client works once it answers again; a system time
-  that jumps forward does not close a healthy connection; a closed
+  both cases the same client works once it answers again; an idle
+  connection whose PINGs are answered is kept past the silence limit; a
+  system time that jumps forward does not close a healthy connection; a closed
   connection keeps neither the watchdog's timer nor its listeners.
 - `apps/api/src/health/health.controller.spec.ts`: 200 when `PING` answers;
   a failed `PING` is the 503 body of rule 8; while the connection is down

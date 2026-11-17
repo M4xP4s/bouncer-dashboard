@@ -379,19 +379,18 @@ class SocketSession implements LiveSession {
     return withRequest(this.held.liveRecords, userId, event.request);
   }
 
-  /** Returns false when the event is dropped whole: its row is not newer. */
-  private applyEvent(event: LiveEvent): boolean {
-    if (!this.active()) return false;
+  /** Keeps the row and the request of an event only when its row is newer. */
+  private applyEvent(event: LiveEvent): void {
+    if (!this.active()) return;
     // A known page's rows are held, so its events are already applied.
     if (this.held.page === null) this.pending.add(event.row);
-    // Off the page: nothing is kept, but the alert still shows.
-    if (!this.isHeld(event.row.userId)) return true;
+    // Off the page: nothing is kept.
+    if (!this.isHeld(event.row.userId)) return;
     const rows = this.rowsWith(event.row);
-    if (!rows) return false;
+    if (!rows) return;
     const liveRecords = this.recordsWith(event);
     this.publish({ rows, liveRecords, lastUpdateAt: event.at });
     this.alarm.aim(rows);
-    return true;
   }
 
   private showDisconnected(): void {
@@ -417,9 +416,10 @@ class SocketSession implements LiveSession {
         if (isRateUpdate(event)) this.applyEvent(event);
       },
       'rate:limit_exceeded': (event: unknown) => {
-        if (isLimitExceeded(event) && this.applyEvent(event)) {
-          this.onLimitExceeded(event);
-        }
+        if (!isLimitExceeded(event) || !this.active()) return;
+        this.applyEvent(event);
+        // A snapshot may already hold this version; the rejection still happened.
+        this.onLimitExceeded(event);
       },
     };
   }

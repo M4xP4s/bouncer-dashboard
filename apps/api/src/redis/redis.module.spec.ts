@@ -57,6 +57,8 @@ const TWO_CHECKS_MS = 2500;
 // second, and one watchdog check.
 const DETECTION_LIMIT_MS = 5000;
 const RECOVERY_LIMIT_MS = 3000;
+// Past the 3 s silence limit and the half second before a reconnect.
+const IDLE_MS = 4000;
 const OUTAGE_TEST_TIMEOUT_MS = 10_000;
 
 afterEach(async () => {
@@ -146,6 +148,24 @@ describe('connectRedis', () => {
           RECOVERY_LIMIT_MS,
         );
         await expect(client.ping()).resolves.toBe('OK');
+      } finally {
+        await closeRedis(client);
+      }
+    },
+    OUTAGE_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'keeps an idle connection whose PINGs are answered',
+    async () => {
+      const peer = await listenAsRedis();
+      const client = await connectRedis(peer.url);
+
+      try {
+        await new Promise((resolve) => setTimeout(resolve, IDLE_MS));
+
+        expect(peer.connectionCount()).toBe(1);
+        expect(client.isReady).toBe(true);
       } finally {
         await closeRedis(client);
       }

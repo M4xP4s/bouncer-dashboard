@@ -71,6 +71,23 @@ describe('RateLimitInterceptor', () => {
     expect(next.handle).toHaveBeenCalledOnce();
   });
 
+  it('records the outcome at the time of the decision, although the clock has moved on', async () => {
+    const { store, run } = setup();
+    const admitted = admission('allowed', 1);
+    store.admit.mockImplementation(() => {
+      vi.setSystemTime(now + 1);
+      return Promise.resolve(admitted);
+    });
+
+    await run();
+
+    expect(store.recordOutcome).toHaveBeenCalledExactlyOnceWith(
+      'user-01',
+      now,
+      admitted,
+    );
+  });
+
   it.each([{}, { userId: null }, { userId: '' }, { userId: 42 }])(
     'rejects missing or invalid guard identity %j without consuming quota',
     async (identity) => {
@@ -257,7 +274,7 @@ describe('RateLimitInterceptor', () => {
     });
     expect(response.setHeader).not.toHaveBeenCalled();
     expect(next.handle).not.toHaveBeenCalled();
-    expect(logged).toHaveBeenCalledOnce();
+    expect(logged).toHaveBeenCalledExactlyOnceWith('admission failed', cause);
   });
 
   it('does not disguise a defect of ours as 503', async () => {

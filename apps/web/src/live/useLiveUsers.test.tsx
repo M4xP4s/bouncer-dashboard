@@ -140,6 +140,8 @@ it('serializes snapshots and coalesces all requests during a pending snapshot on
   });
   await connect();
   expect(client.users).toHaveBeenCalledTimes(1);
+  // Asking again must not cancel the read that is running.
+  expect(client.users.mock.calls[0][1]?.aborted).toBe(false);
 
   await act(async () => pending.resolve(pageOf(users)));
   expect(client.users).toHaveBeenCalledTimes(2);
@@ -241,27 +243,39 @@ it('retains a snapshot failure while its queued refresh is pending and clears it
   expect(result.current.snapshot).toEqual({ status: 'loaded', error: null });
 });
 
-it('applies current alerts once, drops stale alerts whole, and never fetches for events', () => {
+it('alerts for every limit event, whatever row is held, and never fetches for events', () => {
   const { result, client, onLimitExceeded, emitUpdate, emitExceeded } =
     setup('user-05');
 
   act(() => {
     emitExceeded(limitExceeded);
-    emitExceeded(limitExceeded);
     emitUpdate(resetUpdate);
   });
   expect(onLimitExceeded).toHaveBeenCalledExactlyOnceWith(limitExceeded);
-  expect(result.current.liveRecords.get('user-05')).toEqual([
-    limitExceeded.request,
-  ]);
+  const records = result.current.liveRecords;
+  expect(records.get('user-05')).toEqual([limitExceeded.request]);
 
   act(() =>
     result.current.applyRow({ ...limitExceeded.row, version: 102, used: 0 }),
   );
   act(() => emitExceeded(limitExceeded));
-  expect(onLimitExceeded).toHaveBeenCalledTimes(1);
+  expect(onLimitExceeded).toHaveBeenCalledTimes(2);
   expect(result.current.rows.get('user-05')?.used).toBe(0);
+  expect(result.current.liveRecords).toBe(records);
   expect(client.users).not.toHaveBeenCalled();
+});
+
+it('alerts although a snapshot already holds the version of the rejection', async () => {
+  const { result, client, connect, onLimitExceeded, emitExceeded } = setup();
+  // Read after the rejection was counted and before its entry was removed.
+  const overtaking = { ...limitExceeded.row, used: 101 };
+  client.users.mockResolvedValue(pageOf([overtaking]));
+  await connect();
+
+  act(() => emitExceeded(limitExceeded));
+
+  expect(onLimitExceeded).toHaveBeenCalledExactlyOnceWith(limitExceeded);
+  expect(result.current.rows.get('user-05')).toBe(overtaking);
 });
 
 it('keeps the newest 100 applied live records of the selected user and ignores obsolete requests', () => {
@@ -281,12 +295,21 @@ it('keeps the newest 100 applied live records of the selected user and ignores o
   expect(client.users).not.toHaveBeenCalled();
 });
 
-it('stops old callbacks, pending snapshots, row applies and refreshes on session abort', async () => {
-  const { result, controller, client, socket, session, connect } = setup();
+it('stops old callbacks, alerts, pending snapshots, row applies and refreshes on session abort', async () => {
+  const {
+    result,
+    controller,
+    client,
+    socket,
+    session,
+    connect,
+    onLimitExceeded,
+  } = setup();
   const pending = deferred<UsersPage>();
   client.users.mockReturnValueOnce(pending.promise);
   // Taken before the abort unregisters them: a late frame can still call them.
   const [oldUpdate] = socket.listeners['rate:update'];
+  const [oldExceeded] = socket.listeners['rate:limit_exceeded'];
   const [oldError] = socket.listeners.connect_error;
   await connect();
   act(() => result.current.refresh());
@@ -295,6 +318,7 @@ it('stops old callbacks, pending snapshots, row applies and refreshes on session
   const held = result.current;
   act(() => {
     oldUpdate(requestUpdate);
+    oldExceeded(limitExceeded);
     oldError(new Error('Unauthorized'));
     held.applyRow(requestUpdate.row);
     held.refresh();
@@ -304,6 +328,7 @@ it('stops old callbacks, pending snapshots, row applies and refreshes on session
 
   expect(result.current).toBe(held);
   expect(client.users).toHaveBeenCalledTimes(1);
+  expect(onLimitExceeded).not.toHaveBeenCalled();
   expect(session.onRefused).not.toHaveBeenCalled();
   expect(socket.disconnect).toHaveBeenCalledOnce();
 });
@@ -315,6 +340,7 @@ it('removes exactly its own socket callbacks and timers when unmounted', async (
 
   unmount();
 
+  expect(vi.getTimerCount()).toBe(0);
   expect(vi.mocked(socket.off).mock.calls).toEqual(added);
   expect(socket.disconnect).toHaveBeenCalledOnce();
   await advanceTime(30_000);
