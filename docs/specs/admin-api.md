@@ -2,196 +2,189 @@
 
 ## Scope
 
-The four admin actions, the read model with its paged user list, and its
-storage. Answers (Core feature 1; Core feature 2; Core feature 3; Core
-feature 4; Core feature 5; Backend 5; Backend 7; Expectation: security;
-Expectation: reliability; Expectation: scalability; Expectation:
-performance).
+The admin actions, the paged user list, detail, history and analytics. Answers
+(Core features 1–5; Backend 5; Backend 7; Expectation: security, reliability,
+scalability, performance).
 
 ## Behavior
 
-1. **Checks first.** A refused request changes and emits nothing. The HTTP
-   parser rejects malformed or oversized JSON (400 or 413). After parsing,
-   the [platform](platform.md#behavior) checks the credential (401) before
-   the route checks user ID in the registry (404), list query or action
-   input (400). A route with a user ID answers in this order: 401, 400 for
-   a malformed ID, 503 when the registry cannot be read, 404 for an ID not
-   registered, and only then 400 for an invalid body or query value, so an
-   unknown user is answered 404 before the body's values are validated.
-   (Expectation: security; [P16])
+1. **Checks first.** A refused request changes and emits nothing. In order:
+   malformed JSON (400) or an oversized body (413) at the parser; the
+   credential (401, [platform](platform.md#behavior)); on a user route, a
+   malformed ID (400), an unreadable registry (503), an unregistered ID
+   (404); only then an invalid body or query value (400), so an unknown user
+   is 404 whatever its body. (Expectation: security; [P16])
 2. **Bounds. Interpretation:** "Adjust limit (custom value)" and "temporarily"
-   give no bounds. An action with a body accepts exactly one integer field:
-   `limit` 1–10000, `minutes` 1–1440 or `amount` 1–10000. An invalid body or
-   a missing or invalid history `range` gives 400. (Core feature 3; Expectation: security; [P16])
+   give no bounds. A body holds exactly one integer: `limit` 1–10000,
+   `minutes` 1–1440 or `amount` 1–10000. History `range` is required, `hour`
+   or `day`. (Core feature 3; Expectation: security; [P16])
 3. **Reset. Interpretation:** "Reset limit" resets usage, not the limit: it
-   removes the window's usage and grant, keeps limit, suspension and history,
-   and stamps the last reset time. (Core feature 3; [P14])
-4. **Limit.** "Adjust limit (custom value)" is a base limit until changed.
-   Usage and the grant stay. Once the cap is spent, the next request is
-   rejected unless throttling is suspended. (Core feature 3)
+   clears the window's usage and grant, keeps limit, suspension and history,
+   and stamps the last reset. (Core feature 3; [P14])
+4. **Limit.** A custom limit is the base limit until changed. Usage and grant
+   stay, so a spent cap rejects the next request unless throttling is
+   suspended. (Core feature 3)
 5. **Suspension. Interpretation:** "Suspend or unlock throttling temporarily"
    needs an end, now plus `minutes`, that admission compares with its own
    clock, so no job ends it; over-cap requests are admitted and counted.
    Unlock ends it early. (Core feature 3; [P12])
-6. **Extra. Interpretation:** "Add extra requests within current window" raises
-   this UTC-hour window's cap by `amount`; grants add up, leave usage alone
+6. **Extra. Interpretation:** "Add extra requests within current window"
+   raises this UTC hour's cap by `amount`; grants add up, leave usage alone
    and end at the hour. (Core feature 3; [P13])
-7. **Settled, then answered.** A successful action returns 200 with the `UserRow`
-   from its transaction. [Live updates](live-updates.md#behavior) defines
-   when it emits an event and re-arms an alert. An unavailable store gives
-   503; Redis error replies and other defects give 500. The action is not
-   retried: a failed or lost reply does not prove nothing was written.
-   (Expectation: reliability; [P15]; [P17])
-8. **List, detail, history.** The list is one page of rows, one per user, in
-   plain string order of the ID (rule 10); detail adds up to 100 recent
-   requests less than 24 hours old, newest first (ties by request ID).
-   **Interpretation:** "short activity history (past hour/day)" shows 60 minute
-   buckets or 24 UTC hour buckets, oldest first, including the current bucket
-   and filling empty buckets with zero. (Core feature 1; Core feature 2)
-9. **Analytics** count every registered user, whatever page or filter the
-   list shows. **Interpretation:** "% near limit" is the share of users with
-   counted requests this window at Warning or Exceeded, rounded to the
-   nearest integer, 0 when none. "429 count today" uses the UTC day. "Top
-   users" ranks up to five active users by usage, highest first, equal usage
-   by user ID. (Core feature 5; [P4])
-10. **List query.** `page` from 1 (default 1) and `pageSize` from 1 to 100
-    (default 50), in plain decimal digits; `search` at most 64 characters,
-    matched as a case-insensitive substring of the ID (default empty);
-    `status` `any`, `OK`, `Warning` or `Exceeded` (default `any`); `active`
-    `any`, `5m`, `1h` or `24h` (default `any`), kept when the last request is
-    at or after the read's start minus that period, so a user who never
+7. **Settled, then answered.** A successful action answers 200 with the
+   `UserRow` of its transaction; [live updates](live-updates.md#behavior)
+   define its event and alert re-arm. An unavailable store is 503; a Redis
+   error reply or other defect is 500. No retry: a failed or lost reply does
+   not prove nothing was written. (Expectation: reliability; [P15]; [P17])
+8. **List, detail, history.** A list page holds rows in plain string order of
+   the ID; detail adds up to 100 requests of the last 24 hours, newest first,
+   ties by request ID. **Interpretation:** "short activity history (past
+   hour/day)" is 60 minute or 24 UTC-hour buckets, oldest first, the current
+   one included, empty ones zero. (Core feature 1; Core feature 2)
+9. **Analytics** count every registered user, whatever the list shows.
+   **Interpretation:** "% near limit" is the share of users with counted
+   requests this window at Warning or Exceeded, rounded to the nearest
+   integer, 0 when none; "429 count today" counts the UTC day; "Top users"
+   are up to five active users by usage, highest first, then by ID. Usage is
+   the row's count for this window, so a reset takes a user's earlier
+   requests out of the ranking. (Core feature 5; [P4])
+10. **List query.** In plain decimal digits, `page` 1 (default) to
+    ⌊(2^53 − 1) / 100⌋, so the offset stays exact, and `pageSize` 1–100
+    (default 50); `search` up to 64 characters (default empty), a
+    case-insensitive substring of the ID; `status` `OK`, `Warning` or
+    `Exceeded`; `active` `5m`, `1h` or `24h`: a last request at or after the
+    read's start minus that period. Both default to `any`; a user who never
     called matches only `any`. An unknown, repeated or out-of-range field is
-    400. Every filter applies to all registered users before the page is cut;
-    `total` counts all matches, and a page past the last has no rows. (Core
-    feature 4; Expectation: security; [P16])
-11. **Reads in batches.** An unfiltered page reads only its own IDs and rows.
-    A filtered page and the analytics read every registered user in ID
-    order, 100 rows per transaction, keeping only the page, the counts and
-    the top five. Each row is consistent with its version, but the whole is
-    not one snapshot: a user can change between two batches. A read stops at
-    the last ID registered when it began. `startedAt` and `completedAt` give
-    its interval. (Expectation: performance; Expectation: reliability; [P9])
+    400. Filters apply to every registered user before the page is cut;
+    `total` counts every match; a page past the last is empty. (Core feature
+    4; Expectation: security; [P16])
+11. **Reads in batches.** An unfiltered page reads only its IDs and rows. A
+    filtered page and the analytics read every user in ID order, a batch per
+    transaction: each row is consistent with its version, the whole is not
+    one snapshot. A read stops at the highest registered ID, in string order,
+    that existed when it began; a user registered meanwhile is read only if
+    its ID sorts after the batches already read and not after that ID, so the
+    read cannot be extended and its memory stays bounded. `startedAt` and
+    `completedAt` give its interval.
+    (Expectation: performance; Expectation: reliability; [P9])
+
+Rules 1 and 7 for an action; an unlabelled arrow is the check passing:
+
+```mermaid
+flowchart LR
+    Q[request] --> J{JSON} -- malformed or too large --> X1[400 or 413]
+    J --> A{admin token} -- missing or wrong --> X2[401]
+    A --> U{":userId"} -- malformed, registry down, unknown --> X3[400, 503, 404]
+    U --> V{body} -- invalid --> X4[400]
+    V --> T["one MULTI/EXEC: write, version + 1, row read"] -- fails --> X5[503 or 500]
+    T --> R[200 with that UserRow]
+```
 
 ## Interface
 
 | Route under `/api/admin`; admin bearer token | Body | Answer | Errors |
 | --- | --- | --- | --- |
-| `GET /users?page=&pageSize=&search=&status=&active=` | none | `UsersPage` | 400 401 503 |
-| `GET /users/:id` | none | `UserDetail` | 400 401 404 503 |
-| `GET /users/:id/history?range=` | none | `HistoryBucket[]` | 400 401 404 503 |
-| `GET /analytics` | none | `Analytics` | 401 503 |
-| `POST /users/:id/reset`, `DELETE /users/:id/suspension` | none | `UserRow` | 400 401 404 503 |
-| `PUT /users/:id/limit` | `SetLimitBody` | `UserRow` | 400 401 404 503 |
-| `POST /users/:id/suspension` | `SuspendBody` | `UserRow` | 400 401 404 503 |
-| `POST /users/:id/extra` | `ExtraBody` | `UserRow` | 400 401 404 503 |
+| `GET /users?page=&pageSize=&search=&status=&active=` | none | `UsersPage` | 400 401 500 503 |
+| `GET /users/:userId` | none | `UserDetail` | 400 401 404 500 503 |
+| `GET /users/:userId/history?range=` | none | `HistoryBucket[]` | 400 401 404 500 503 |
+| `GET /analytics` | none | `Analytics` | 401 500 503 |
+| `POST /users/:userId/reset`, `DELETE /users/:userId/suspension` | none | `UserRow` | 400 401 404 500 503 |
+| `PUT /users/:userId/limit`, `POST /users/:userId/suspension`, `POST /users/:userId/extra` | `SetLimitBody`, `SuspendBody`, `ExtraBody` | `UserRow` | 400 401 404 413 500 503 |
 
-Reads use the Redis keys defined in [Rate limiting](rate-limiting.md#interface)
-and the registry keys of [platform](platform.md#interface).
+Storage: the keys of [rate limiting](rate-limiting.md#interface) and of
+[platform](platform.md#interface).
 
 ## Decisions
 
 ### Admin writes and admission
 
-Asked: concurrency-proof limiting (Backend 5)
-with controls acting mid-window. Each action is one `MULTI`/`EXEC` transaction
-on admission's instance, ending in a version increment and a row read, so the
-returned row reflects the action at its place in that order. `WATCH` with
-retry costs round trips, a lock can outlive its holder, scripts add a language.
-Cost: the write queues the row read as well as the mutation.
+Asked: concurrency-proof limiting (Backend 5) with controls acting mid-window.
+Each action is one `MULTI`/`EXEC` on admission's instance, ending in a version
+increment and a row read, so the returned row shows the action at its place in
+that order. `WATCH` with retry costs round trips, a lock can outlive its
+holder, scripts add a language. Cost: the write also queues the row read.
 
 ### Usage, limit and grant apart
 
-These values follow different lifetimes.
-Admission and admin reads use the same keys and row builder. A single counter
-could preserve an expired grant or erase usage when a limit changes ([P13]).
-Cost: five commands per row read.
+These values have different lifetimes, so each has its key; admission and
+admin reads share keys and row builder. One counter could keep an expired
+grant or erase usage when a limit changes ([P13]). Cost: five commands per
+row read.
 
 ### Numbered pages, filtered by reading in batches
 
-Asked: a live table with
-search and filters (Core features 1, 4) for a population that should scale.
-Sending every row grows each response and each dashboard's memory with the
-population, so the server cuts a page. Status and last activity change with
-every request and at every hour boundary without a write, so an index on
-them would have to be kept in the admission transaction and repaired each
-hour; reading the rows in ID order, a batch at a time, keeps admission as it
-is and bounds the memory a read holds. Alternatives: a cursor instead of
-page numbers, which cannot show "page 3 of 20" or jump to the last page;
-filtering in the browser, which needs every row; sorted-set indexes per
-status. Cost: a filtered page and the analytics take time that grows with
-the population, on every read. Cases: the user reads spec, the registry
-cases.
+Asked: a live table with search and filters (Core features 1, 4) that scales.
+Sending every row grows each response and dashboard with the population, so
+the server cuts a page. Status and last activity change with every request and
+every hour without a write, so an index on them would burden admission and
+need hourly repair; reading rows in ID order, a batch at a time, leaves
+admission alone. Alternatives: a cursor (no "page 3 of 20"); filtering in the
+browser (every row sent); per-status sorted sets (that upkeep). Cost: filtered
+pages and analytics take time that grows with the population. Cases:
+`user-reads.spec.ts`, `registry.e2e-spec.ts`.
 
 ## Test plan
 
-Mocked store (`vitest-mock-extended`; the test supplies the time):
-- `apps/api/src/admin/admin.controller.spec.ts`: check order, including 400
-  for a malformed ID before the registry is read and 404 for an unknown user
-  with an invalid value however late the registry answers; a refused call never reaches the store or emits; the answer
-  waits for the write; 503, 500; a list query with an unknown, repeated or
-  out-of-range field is 400 before any read.
-- `apps/api/src/admin/user-reads.spec.ts`: an unfiltered page reads only its
-  IDs; filters apply before the page is cut and `total` counts every match;
-  a page past the end is empty; analytics add up every batch.
-- `apps/api/src/rate-limit/rate-limit.store.spec.ts` (admin actions, reads):
-  reset deletes only window and grant; no other action writes usage; version
-  and row read in the action's transaction; history buckets.
-- `apps/api/src/admin/analytics.spec.ts`: near-limit share, ranking with
-  ties by ID, idle zero, rows added in batches.
+Mocked store (`vitest-mock-extended`, the test sets the time), in
+`apps/api/src/`:
+- `admin/admin.controller.spec.ts`: check order; a refusal reaches neither
+  store nor event; the answer waits for the write; 503 for an outage, 500 for
+  a defect; list-query refusals.
+- `admin/user-reads.spec.ts`: an unfiltered page reads only its IDs; filters
+  before the cut; `total`; past the end; analytics over every batch.
+- `admin/analytics.spec.ts`: near-limit share, ranking with ties by ID, idle
+  zero, rows added in batches.
+- `rate-limit/rate-limit.store.spec.ts`: what each action writes; version and
+  row read in its transaction; history buckets.
 
 Real store, in `apps/api/test/` (run as in
 [rate limiting](rate-limiting.md#test-plan)):
-- `admin-behavior.e2e-spec.ts`: reset clears usage and grant and keeps the
-  limit; a lower limit keeps usage; a grant adds its slots and ends with the
-  hour; a suspension bypasses, is counted, and ends on expiry or on request.
-- `admin-http.e2e-spec.ts`: bad input (wrong type, fraction, out of range,
-  extra field) and unknown users change nothing; an
-  unknown user with an invalid body or history range is 404 and writes
-  nothing; every route and the socket refuse a missing and a user token; an
-  ID with uppercase, `_` and `-` survives every route ([P11]).
+- `admin-behavior.e2e-spec.ts`: reset, limit, grant and suspension as in
+  rules 3–6.
+- `admin-http.e2e-spec.ts`: bad input changes nothing; an unknown user with
+  an invalid value is 404 and writes nothing; an oversized body to a route
+  with a body is 413 with the `ApiError` shape; a Redis error reply from each
+  of the five actions is 500, not 503; 401 on every route, and the socket's
+  connection refused with "Unauthorized"; an ID with uppercase, `_` and `-`
+  survives ([P11]).
 - `read-model.e2e-spec.ts`: snapshot, detail, `x-count` and analytics agree;
-  the top users are ranked by usage, equal usage by ID; histories include
-  the previous hour and zero-filled buckets; the stored list of recent
-  requests stays capped at 100.
-- `registry.e2e-spec.ts`: first, middle, last and past-the-end pages of
-  10000 users; status, last activity and search count across all users;
-  the page asked for leaves analytics unchanged; a read in batches ends at
-  the last ID registered when it began; bad queries are 400.
+  top users; histories across the hour, zero-filled; 100 recent requests kept.
+- `registry.e2e-spec.ts`: first, middle, last and past-the-end pages of 10001
+  users; filters and analytics over every user; a batched read ends at the
+  last ID of its start; bad queries are 400.
 
 ## Milestone
 
 With a fresh Redis (`docker compose up -d redis`), `cp .env.example .env` and
 `npm run start:dev -w apps/api` running, in another shell set
 `ADMIN='Authorization: Bearer demo-admin-token'`,
-`JSON='Content-Type: application/json'` and
-`USER7=http://localhost:3000/api/admin/users/user-07`, then run in order:
+`JSON='Content-Type: application/json'`,
+`API=http://localhost:3000/api/admin` and `USER7=$API/users/user-07`, then
+run in order:
 
-| Step | Command | Expect |
+| Step | Commands | Expect, in turn |
 | --- | --- | --- |
-| 1 Reset | `curl -s -X POST -H "$ADMIN" $USER7/reset` | a row with `"used":0`, `"limit":100`, `"status":"OK"` |
-| 2 Lower the limit | `curl -s -X PUT -H "$ADMIN" -H "$JSON" -d '{"limit":2}' $USER7/limit` | `"limit":2`, `"total":2`, `"remaining":2` |
-| 3 Use the quota | `for n in 1 2 3; do curl -s -o /dev/null -w '%{http_code} ' -H 'Authorization: Bearer demo-token-07' http://localhost:3000/api/sample; done` | `200 200 429` |
-| 4 Detail | `curl -s -H "$ADMIN" $USER7` | `"used":2`, `"remaining":0`, `"status":"Exceeded"`; three `recentRequests`, `"outcome":"denied"` first, then two `"allowed"` |
-| 5 History | `curl -s -H "$ADMIN" "$USER7/history?range=hour"` | 60 buckets whose counts add up to `"allowed":2` and `"denied":1`; `range=day` gives 24 |
-| 6 Analytics | `curl -s -H "$ADMIN" http://localhost:3000/api/admin/analytics` | `"totalUsers":12`, `"activeUsers":1`, `"nearLimitPercent":100`, `"denied429Today":1`, `"topUsers":[{"userId":"user-07","used":2,"total":2}]` |
-| 7 Grant | `curl -s -X POST -H "$ADMIN" -H "$JSON" -d '{"amount":1}' $USER7/extra` | `"extra":1`, `"total":3`, `"remaining":1`, `"used":2` |
-| 8 Suspend | `curl -s -X POST -H "$ADMIN" -H "$JSON" -d '{"minutes":5}' $USER7/suspension` | `"suspendedUntil"` five minutes ahead |
-| 9 Unlock | `curl -s -X DELETE -H "$ADMIN" $USER7/suspension` | `"suspendedUntil":null` |
-| 10 Reset again | `curl -s -X POST -H "$ADMIN" $USER7/reset` | `"used":0`, `"extra":0`, `"limit":2` (reset keeps the limit) |
-| 11 Refusals | `curl -s -w ' %{http_code}\n' -X PUT -H "$ADMIN" -H "$JSON" -d '{"limit":1.5}' $USER7/limit`; `curl -s -w ' %{http_code}\n' -X POST -H "$ADMIN" http://localhost:3000/api/admin/users/nobody/reset`; `curl -s -w ' %{http_code}\n' http://localhost:3000/api/admin/users`; `curl -s -w ' %{http_code}\n' -H "$ADMIN" "http://localhost:3000/api/admin/users?pageSize=101"` | in turn: `limit must be an integer number` 400; `Unknown user.` 404; `A valid admin token is required.` 401; `pageSize must not be greater than 100` 400 |
-| 12 Page | `curl -s -H "$ADMIN" "http://localhost:3000/api/admin/users?page=2&pageSize=5"` | `"total":12`, `"page":2`, the rows of `user-06` to `user-10` |
-| 13 Filter | `curl -s -H "$ADMIN" "http://localhost:3000/api/admin/users?search=USER-0&active=1h"` | `"total":1` and the row of `user-07`; without `&active=1h`, `"total":9` |
+| 1 Reset, lower | `curl -s -X POST -H "$ADMIN" $USER7/reset`; `curl -s -X PUT -H "$ADMIN" -H "$JSON" -d '{"limit":2}' $USER7/limit` | `"used":0`, `"limit":100`, `"status":"OK"`; `"limit":2`, `"total":2`, `"remaining":2` |
+| 2 Use the quota | `for n in 1 2 3; do curl -s -o /dev/null -w '%{http_code} ' -H 'Authorization: Bearer demo-token-07' http://localhost:3000/api/sample; done` | `200 200 429` |
+| 3 Detail, history | `curl -s -H "$ADMIN" $USER7`; `curl -s -H "$ADMIN" "$USER7/history?range=hour"`; the same with `range=day` | `"used":2`, `"remaining":0`, `"status":"Exceeded"`, three `recentRequests`, `"outcome":"denied"` first, then two `"allowed"`; 60 buckets adding up to `"allowed":2` and `"denied":1`; 24 buckets |
+| 4 Analytics | `curl -s -H "$ADMIN" $API/analytics` | `"totalUsers":12`, `"activeUsers":1`, `"nearLimitPercent":100`, `"denied429Today":1`, `"topUsers":[{"userId":"user-07","used":2,"total":2}]` |
+| 5 Grant | `curl -s -X POST -H "$ADMIN" -H "$JSON" -d '{"amount":1}' $USER7/extra` | `"extra":1`, `"total":3`, `"remaining":1`, `"used":2` |
+| 6 Suspend, unlock, reset | `curl -s -X POST -H "$ADMIN" -H "$JSON" -d '{"minutes":5}' $USER7/suspension`; `curl -s -X DELETE -H "$ADMIN" $USER7/suspension`; `curl -s -X POST -H "$ADMIN" $USER7/reset` | `"suspendedUntil"` five minutes ahead; `"suspendedUntil":null`; `"used":0`, `"extra":0`, `"limit":2` |
+| 7 Refusals | `curl -s -w ' %{http_code}\n' -X PUT -H "$ADMIN" -H "$JSON" -d '{"limit":1.5}' $USER7/limit`; `curl -s -w ' %{http_code}\n' -X POST -H "$ADMIN" $API/users/nobody/reset`; `curl -s -w ' %{http_code}\n' $API/users`; `curl -s -w ' %{http_code}\n' -H "$ADMIN" "$API/users?pageSize=101"` | `limit must be an integer number` 400; `Unknown user.` 404; `A valid admin token is required.` 401; `pageSize must not be greater than 100` 400 |
+| 8 Page, filter | `curl -s -H "$ADMIN" "$API/users?page=2&pageSize=5"`; `curl -s -H "$ADMIN" "$API/users?search=USER-0&active=1h"`; `curl -s -H "$ADMIN" "$API/users?search=USER-0"` | `"total":12`, `"page":2`, rows `user-06` to `user-10`; `"total":1`, the row of `user-07`; `"total":9` |
 
 ## Limits
 
-Mocked cases check the commands queued. The HTTP milestone exercises one API
-process without concurrent writes. History and counters are recorded separately
-from admission; analytics reads rows and the daily count in separate
-transactions. A filtered page and the analytics read every registered user
-on each request: their time grows with the population, nothing bounds it,
-and `npm run check:population` measures it on one machine only.
+Mocked cases check the commands queued; the milestone runs one API process
+without concurrent writes. History and counters are recorded apart from
+admission, and analytics reads rows and the daily count in separate
+transactions. Only the list refuses unknown query fields; other routes ignore
+those they do not read. The time of a filtered page and of analytics grows
+with the population, unbounded; `npm run check:population` measures it on one
+machine only.
 
 [P4]: ../PITFALLS.md#p4-a-near-limit-figure-that-drops-when-users-get-blocked
+[P9]: ../PITFALLS.md#p9-storing-something-without-a-bound
 [P11]: ../PITFALLS.md#p11-a-user-id-that-is-not-one-plain-string
 [P12]: ../PITFALLS.md#p12-a-temporary-suspension-that-never-ends
 [P13]: ../PITFALLS.md#p13-usage-base-limit-and-grant-in-one-number

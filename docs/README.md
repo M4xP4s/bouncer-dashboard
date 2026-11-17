@@ -13,6 +13,8 @@ How this project is specified, and where each kind of fact is defined.
 | 5 | `VERIFICATION.md` | What was shown to work: dated results and what was not checked. |
 
 The [README](../README.md) is the entry point: overview and commands.
+[NOT-DOING.md](NOT-DOING.md) gathers what the project leaves out on purpose;
+each of its rows links to the decision or limit that defines it.
 
 ## One definition per fact
 
@@ -92,9 +94,9 @@ stable document that grows as the capability does.
   reachable from a test-plan case or a milestone step. A rule is worded so
   that it can be checked; required behavior that cannot yet be verified is
   recorded as a gap, not dropped.
-- **Short.** Aim for 60 to 120 lines per capability. A section with nothing
-  to say is left out. When a specification grows, remove implementation
-  inventory before splitting it.
+- **Short.** Aim for about 200 lines per capability, prose wrapped at 80
+  columns. A section with nothing to say is left out. When a specification
+  grows, remove implementation inventory before splitting it.
 
 | Section | Content |
 | --- | --- |
