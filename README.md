@@ -62,6 +62,13 @@ http://localhost:3000. The dashboard also runs without an API, on fixture data:
 VITE_FIXTURES=1 npm run dev -w apps/web
 ```
 
+To run everything in containers instead, with ports 3000 and 6379 free:
+
+```sh
+docker compose up --build --wait    # Redis and the application, page on http://127.0.0.1:3000
+docker compose down -v              # stops both and deletes the Redis data
+```
+
 ## Documentation
 
 - [Requirements](docs/REQUIREMENTS.md): the assignment brief and the additional expectations.

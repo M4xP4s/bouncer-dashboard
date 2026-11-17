@@ -1,9 +1,12 @@
+# Two run modes, same code:
+#   docker compose up --build   Redis and the application, page on :3000
+#   docker compose up redis     Redis only; the code runs on the host
 services:
   redis:
     image: redis:8-alpine
     # Bound to loopback: this Redis has no password, so it must not be
-    # reachable from the network. Host-mode development and the integration
-    # tests reach it here.
+    # reachable from the network. Host-mode development reaches it here; the
+    # integration tests need a server of their own (see the README).
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
@@ -11,3 +14,23 @@ services:
       interval: 2s
       timeout: 2s
       retries: 15
+
+  app:
+    build: .
+    # Loopback only, like Redis: the demo credentials are public.
+    ports:
+      - "127.0.0.1:3000:3000"
+    # Demo values, not secrets, so the containers need no setup step.
+    env_file: .env.example
+    environment:
+      REDIS_URL: redis://redis:6379
+    # Healthy once the API answers and reaches Redis; `up --wait` waits for it.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    depends_on:
+      redis:
+        # The API refuses to start without Redis.
+        condition: service_healthy
