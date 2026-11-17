@@ -115,6 +115,7 @@ Specifications are listed here as they are introduced.
 | [Platform](specs/platform.md) | The workspace, start-up configuration, who a caller is, the Redis connection and the error response. |
 | [Rate limiting](specs/rate-limiting.md) | UTC windows, atomic admission, quota headers and errors. |
 | [Live updates](specs/live-updates.md) | Authenticated socket events, versioning and alert suppression. |
+| [Admin API](specs/admin-api.md) | Authenticated actions, snapshots, activity history and analytics. |
 
 ### Quality navigation
 
@@ -126,7 +127,7 @@ row has no section yet.
 
 | Quality | Sections |
 | --- | --- |
-| Reliability | [Platform: behavior](specs/platform.md#behavior), [Platform: decisions](specs/platform.md#decisions) |
+| Reliability | [Platform: behavior](specs/platform.md#behavior), [Platform: decisions](specs/platform.md#decisions), [Admin API: decisions](specs/admin-api.md#decisions) |
 | Security | [Platform: behavior](specs/platform.md#behavior), [Platform: limits](specs/platform.md#limits) |
 | Maintainability | [Platform: behavior](specs/platform.md#behavior), [Platform: decisions](specs/platform.md#decisions) |
 | Architecture | [Rate limiting: decisions](specs/rate-limiting.md#decisions), [Live updates: decisions](specs/live-updates.md#decisions) |
