@@ -69,6 +69,10 @@ docker compose up --build --wait    # Redis and the application, page on http://
 docker compose down -v              # stops both and deletes the Redis data
 ```
 
+`npm run demo:traffic` sends requests as five demo users, so the dashboard
+shows every status, then a slow trickle until Ctrl+C. It targets
+http://localhost:3000, or the base URL given after `--`.
+
 ## Documentation
 
 - [Requirements](docs/REQUIREMENTS.md): the assignment brief and the additional expectations.
