@@ -56,8 +56,8 @@ server only; `1` selects fixtures).
   a schema library adds a dependency and a second definition of every payload;
   the guards in `api/validation.ts` restate them too, more cheaply. Cost: a
   field a guard omits goes unnoticed, relations (remaining against total) are
-  unchecked, and the compiler does not compare a guard with its type. Shown by
-  `api/client.test.ts`, `live/useLiveUsers.test.tsx`.
+  unchecked, and the compiler compares only a guard's lists of union members
+  with its type. Shown by `api/client.test.ts`, `live/useLiveUsers.test.tsx`.
 - **Live state in one hook, no state library.** Events and snapshots arrive in
   any order, so `useLiveUsers` owns rows and the snapshot queue; a query
   library would not order them and adds a dependency. Shown by
