@@ -112,7 +112,6 @@ Specifications are listed here as they are introduced.
 | Specification | Covers |
 | --- | --- |
 | [Platform](specs/platform.md) | The workspace, start-up configuration, who a caller is, the Redis connection and the error response. |
-
 | [Rate limiting](specs/rate-limiting.md) | UTC windows, atomic admission, quota headers and errors. |
 | [Live updates](specs/live-updates.md) | Authenticated socket events, versioning and alert suppression. |
 
@@ -129,7 +128,6 @@ row has no section yet.
 | Reliability | [Platform: behavior](specs/platform.md#behavior), [Platform: decisions](specs/platform.md#decisions) |
 | Security | [Platform: behavior](specs/platform.md#behavior), [Platform: limits](specs/platform.md#limits) |
 | Maintainability | [Platform: behavior](specs/platform.md#behavior), [Platform: decisions](specs/platform.md#decisions) |
-
 | Architecture | [Rate limiting: decisions](specs/rate-limiting.md#decisions), [Live updates: decisions](specs/live-updates.md#decisions) |
 | Scalability | [Rate limiting: limits](specs/rate-limiting.md#limits), [Live updates: limits](specs/live-updates.md#limits) |
 | Performance | [Rate limiting: decisions](specs/rate-limiting.md#decisions), [Live updates: decisions](specs/live-updates.md#decisions) |
