@@ -13,6 +13,10 @@ import {
 } from './keys.js';
 import { buildRow, type RowReplies } from './row.js';
 
+const HISTORY_MAX_RECORDS = 100;
+const HISTORY_TTL_SECONDS = 86_400;
+const DENIED_COUNT_TTL_SECONDS = 172_800;
+
 // Connection/execution failures become 503; Redis error replies remain 500.
 export class StoreUnavailable extends Error {
   constructor(cause: unknown) {
@@ -39,43 +43,47 @@ export class RateLimitStore {
   // Write then read inside MULTI/EXEC: concurrent requests cannot share a slot.
   async admit(userId: string, now: number): Promise<Admission> {
     const requestId = randomUUID();
-    const window = keys.window(userId, now);
-    const user = keys.user(userId);
+    const windowKey = keys.window(userId, now);
+    const userKey = keys.user(userId);
 
     const replies = await this.transaction((multi) => {
       multi
-        .zAdd(window, { score: now, value: requestId })
+        .zAdd(windowKey, { score: now, value: requestId })
         // Inside the transaction: set separately, a crash between the two
         // commands would leave a key that never expires.
-        .pExpireAt(window, windowExpiry(now))
-        .hIncrBy(user, userFields.version, 1)
-        .hSet(user, userFields.lastRequestAt, `${now}`);
+        .pExpireAt(windowKey, windowExpiry(now))
+        .hIncrBy(userKey, userFields.version, 1)
+        .hSet(userKey, userFields.lastRequestAt, `${now}`);
       this.appendRowRead(multi, userId, now);
     });
     // The last five replies belong to appendRowRead; Redis's dynamic queue
     // loses its tuple type, so the assertion stays at this library boundary.
-    const [count, limit, extra, suspend, hash] = replies.slice(
-      -5,
-    ) as RowReplies;
+    const rowReplies = replies.slice(-5) as RowReplies;
+    const [count, limit, extra, suspend, userFieldsReply] = rowReplies;
 
     // The count includes this request, so "at the cap" is still admitted.
-    const counted = buildRow(userId, [count, limit, extra, suspend, hash], now);
+    const rowIncludingRequest = buildRow(userId, rowReplies, now);
     let outcome: RequestOutcome = 'allowed';
-    if (count > counted.total) {
-      outcome = counted.suspendedUntil === null ? 'denied' : 'bypassed';
+    if (count > rowIncludingRequest.total) {
+      outcome =
+        rowIncludingRequest.suspendedUntil === null ? 'denied' : 'bypassed';
     }
 
     // A rejected request's own entry is removed by `recordOutcome`, so the
     // row that describes the rejection does not count it.
     const row =
       outcome === 'denied'
-        ? buildRow(userId, [count - 1, limit, extra, suspend, hash], now)
-        : counted;
+        ? buildRow(
+            userId,
+            [count - 1, limit, extra, suspend, userFieldsReply],
+            now,
+          )
+        : rowIncludingRequest;
     return {
       outcome,
       row,
       requestId,
-      generation: Number(hash[userFields.generation] ?? 0),
+      generation: Number(userFieldsReply[userFields.generation] ?? 0),
     };
   }
 
@@ -83,6 +91,7 @@ export class RateLimitStore {
    * Bounded history and counters follow every decision. A rejection removes
    * only its own member, even if a reset happened since it was decided.
    * A failed cleanup can consume later-added capacity but cannot admit more.
+   * Returns true when this rejection claims the notification flag.
    */
   async recordOutcome(
     userId: string,
@@ -102,8 +111,8 @@ export class RateLimitStore {
       }
       multi
         .lPush(keys.history(userId), JSON.stringify(record))
-        .lTrim(keys.history(userId), 0, 99)
-        .expire(keys.history(userId), 86_400)
+        .lTrim(keys.history(userId), 0, HISTORY_MAX_RECORDS - 1)
+        .expire(keys.history(userId), HISTORY_TTL_SECONDS)
         .hIncrBy(
           keys.stat(userId, now),
           statField(denied, minuteInWindow(now)),
@@ -113,7 +122,7 @@ export class RateLimitStore {
       if (denied) {
         multi
           .incr(keys.denied(now))
-          .expire(keys.denied(now), 172_800)
+          .expire(keys.denied(now), DENIED_COUNT_TTL_SECONDS)
           // Never use a newly read generation: an admin action may already
           // have re-armed the next alert while this rejection was delayed.
           .set(keys.notified(userId, now, admission.generation), '1', {
@@ -122,6 +131,7 @@ export class RateLimitStore {
           });
       }
     });
+    // For a rejection, SET NX is the last command; OK means we claimed the flag.
     return denied && replies.at(-1) === 'OK';
   }
 
@@ -150,9 +160,9 @@ export class RateLimitStore {
     }
     const multi = this.redis.multi();
     queue(multi);
-    const call = multi.exec();
+    const execution = multi.exec();
     try {
-      return await call;
+      return await execution;
     } catch (cause) {
       if (cause instanceof ErrorReply) throw cause;
       throw new StoreUnavailable(cause);
