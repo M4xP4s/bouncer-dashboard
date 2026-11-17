@@ -29,7 +29,7 @@ second time and they do not contradict it, so a change is made in one place.
 | Configuration variables | Comments in `.env.example` |
 | Commands | The [README](../README.md) |
 | Results of checks | `VERIFICATION.md` |
-| Rules for coding agents | [CLAUDE.md](../CLAUDE.md) |
+| Rules for coding agents | [AGENTS.md](../AGENTS.md) |
 
 There is no separate decision log and no separate reference document: a topic
 is defined in the specification of the capability it belongs to.

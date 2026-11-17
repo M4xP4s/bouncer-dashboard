@@ -19,4 +19,4 @@ The replay is in progress; the merged pull requests show how far it has come.
 
 ## AI use
 
-AI assistants helped plan, implement, review and test this project. Agent instructions are in [CLAUDE.md](CLAUDE.md).
+AI assistants helped plan, implement, review and test this project. Agent instructions are in [AGENTS.md](AGENTS.md).
