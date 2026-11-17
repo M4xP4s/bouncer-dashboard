@@ -214,7 +214,7 @@ The last full run, on one laptop, at the revision the record names:
 ```mermaid
 xychart-beta
     title "Tests passed, by suite"
-    x-axis ["API (npm test)", "Dashboard (npm test)", "Real Redis (integration)"]
+    x-axis ["API", "Dashboard", "Integration"]
     y-axis "Tests" 0 --> 300
     bar [293, 126, 72]
 ```
