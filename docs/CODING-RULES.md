@@ -1,8 +1,8 @@
 # Coding rules
 
-Rules for readable code, collected from the reviews of this repository's pull
-requests. Each one fixes a pattern a reviewer had to send back. Cite the IDs
-in reviews.
+Rules for readable, reliable code, drawn from repository reviews and the
+framework guidance linked below. Cite the IDs in reviews. These are house
+rules; application behavior remains defined in the owning specification.
 
 ## Comments
 
@@ -67,9 +67,9 @@ if (outcome === 'denied') {
 | ID | Rule |
 | --- | --- |
 | S1 | A function that classifies, normalizes and formats is split into named steps. The top-level function reads as those steps. |
-| S2 | Build a response body or message in its own function, outside the main flow. |
-| S3 | Two methods with the same `try`/`catch` share one helper. |
-| S4 | Trust the types. Drop a check the types or the data already rule out. |
+| S2 | Extract response or message construction when it contains meaningful transformation or obscures the main flow. A simple object can stay inline. |
+| S3 | Share error handling when the failure meaning and recovery policy are the same. Matching `try`/`catch` syntax alone is insufficient. |
+| S4 | After boundary validation, trust the established type inside trusted code. Keep deliberate safety checks for framework wiring that the types cannot guarantee. |
 
 ```ts
 // S1: the filter's catch() is three named steps.
@@ -97,8 +97,55 @@ const userId = this.config.userIdByToken.get(token);
 | N5 | Tie a count to the type it counts: `ROW_REPLY_COUNT: RowReplies['length'] = 5`, so the compiler catches a mismatch. |
 | N6 | Use the framework's constants: `HttpStatus.TOO_MANY_REQUESTS`, not `429`. |
 | N7 | Name an opaque expression: `clockTime(iso)`, not `iso.slice(11, 19)`. |
-| N8 | Compute values before a returned object literal; the literal only assigns names. No repeated lookups or nested calls inside it. |
+| N8 | Extract repeated lookups and opaque calculations before a returned object literal. Simple expressions can stay inline. |
 | N9 | A boolean is named for what it allows (`shouldNotify`), not for the case that usually produces it (`firstRejection`). |
+
+## TypeScript boundaries and state
+
+| ID | Rule |
+| --- | --- |
+| TS1 | Validate external input at its owning boundary, including HTTP, WebSocket, configuration and decoded store data. An annotation, assertion or generic parameter is not runtime validation; do not repeat the same checks downstream (S4). |
+| TS2 | Prefer `unknown` to `any` for untrusted values and narrow before use. Do not use type assertions or non-null assertions merely to silence an error. |
+| TS3 | Use a discriminated union when independent optional fields would allow invalid combinations of mutually exclusive states. |
+
+The [TypeScript handbook](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#type-assertions)
+explains why assertions cannot establish a runtime guarantee.
+
+## Asynchronous work and resources
+
+| ID | Rule |
+| --- | --- |
+| A1 | Await or return work required for an operation's result. Deliberate background work must handle rejection explicitly; `void` alone does not handle it, and adding a rejection handler does not wait for completion. |
+| A2 | Do not pass an async callback to an API that ignores its returned promise, such as `forEach`. Use sequential iteration or explicitly awaited concurrency; bound concurrency when the input can grow. |
+| A3 | Keep request and socket handlers free of synchronous I/O and unbounded CPU work. Declaring a function `async` does not make its CPU work nonblocking. |
+| A4 | Give every timer, listener, subscription and connection one cleanup owner, including partial startup failure and shutdown. Remove only the callbacks that owner registered; a consumer must not close a borrowed resource. |
+
+[P15](PITFALLS.md#p15-answering-before-the-write-has-settled) illustrates A1,
+and [P21](PITFALLS.md#p21-removing-another-components-listeners) illustrates A4.
+[Node.js explains the event-loop cost](https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop)
+behind A3.
+
+Use the existing Oxlint toolchain for automated promise checks:
+[`no-floating-promises`](https://oxc.rs/docs/guide/usage/linter/rules/typescript/no-floating-promises.html)
+and [`no-misused-promises`](https://oxc.rs/docs/guide/usage/linter/rules/typescript/no-misused-promises.html).
+The API already enables the former with type-aware linting. Its default
+`ignoreVoid: true` permits a bare `void`, so a passing lint run alone does not
+prove A1. These rules do not prove that required writes settle before a response;
+that needs the behavior checks in the owning specification.
+
+## NestJS responsibilities and lifetime
+
+| ID | Rule |
+| --- | --- |
+| NE1 | Keep request-specific values in local variables or pass them explicitly. Never store the current user, request or admission result in a singleton provider's fields. |
+| NE2 | Inject shared clients and validated configuration through providers. Follow A4 for resource ownership; do not close injected clients from their consumers. |
+| NE3 | Use guards for authentication and authorization, pipes for transport input validation, interceptors for request/response interception, and filters for exception translation. Keep transport handlers focused on orchestration. |
+| NE4 | Check lifecycle ordering before relying on another component's work. Interceptor pre-handler code runs after guards but before parameter pipes; it cannot assume those pipes have validated its input. |
+
+Providers are [singletons by default](https://docs.nestjs.com/fundamentals/injection-scopes).
+Use request scope only for a concrete lifetime requirement. The
+[request lifecycle](https://docs.nestjs.com/faq/request-lifecycle) defines the
+ordering in NE4.
 
 ## Tests
 
