@@ -34,6 +34,20 @@ export interface Admission {
   generation: number;
 }
 
+// `used` includes this request, so a request at the cap is still admitted.
+function outcomeFor(row: UserRow): RequestOutcome {
+  if (row.used <= row.total) return 'allowed';
+  return row.suspendedUntil === null ? 'denied' : 'bypassed';
+}
+
+const withoutRequest = ([used, ...rest]: RowReplies): RowReplies => [
+  used - 1,
+  ...rest,
+];
+
+const generationOf = ([, , , , user]: RowReplies): number =>
+  Number(user[userFields.generation] ?? 0);
+
 // Quota decisions are atomic; bookkeeping tolerates unavailability, not error replies.
 @Injectable()
 export class RateLimitStore {
@@ -58,32 +72,14 @@ export class RateLimitStore {
     // The trailing replies belong to appendRowRead; Redis's dynamic queue
     // loses its tuple type, so the assertion stays at this library boundary.
     const rowReplies = replies.slice(-ROW_REPLY_COUNT) as RowReplies;
-    const [count, limit, extra, suspend, userFieldsReply] = rowReplies;
 
-    // The count includes this request, so "at the cap" is still admitted.
-    const rowIncludingRequest = buildRow(userId, rowReplies, now);
-    let outcome: RequestOutcome = 'allowed';
-    if (count > rowIncludingRequest.total) {
-      outcome =
-        rowIncludingRequest.suspendedUntil === null ? 'denied' : 'bypassed';
+    let row = buildRow(userId, rowReplies, now);
+    const outcome = outcomeFor(row);
+    // recordOutcome drops a rejected request's entry, so its row excludes it.
+    if (outcome === 'denied') {
+      row = buildRow(userId, withoutRequest(rowReplies), now);
     }
-
-    // A rejected request's own entry is removed by `recordOutcome`, so the
-    // row that describes the rejection does not count it.
-    const row =
-      outcome === 'denied'
-        ? buildRow(
-            userId,
-            [count - 1, limit, extra, suspend, userFieldsReply],
-            now,
-          )
-        : rowIncludingRequest;
-    return {
-      outcome,
-      row,
-      requestId,
-      generation: Number(userFieldsReply[userFields.generation] ?? 0),
-    };
+    return { outcome, row, requestId, generation: generationOf(rowReplies) };
   }
 
   /**
