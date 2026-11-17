@@ -45,8 +45,9 @@ scalability, performance).
    **Interpretation:** "% near limit" is the share of users with counted
    requests this window at Warning or Exceeded, rounded to the nearest
    integer, 0 when none; "429 count today" counts the UTC day; "Top users"
-   are up to five active users by usage, highest first, then by ID. (Core
-   feature 5; [P4])
+   are up to five active users by usage, highest first, then by ID. Usage is
+   the row's count for this window, so a reset takes a user's earlier
+   requests out of the ranking. (Core feature 5; [P4])
 10. **List query.** In plain decimal digits, `page` 1 (default) to
     ⌊(2^53 − 1) / 100⌋, so the offset stays exact, and `pageSize` 1–100
     (default 50); `search` up to 64 characters (default empty), a
@@ -61,9 +62,10 @@ scalability, performance).
     filtered page and the analytics read every user in ID order, a batch per
     transaction: each row is consistent with its version, the whole is not
     one snapshot. A read stops at the highest registered ID, in string order,
-    that existed when it began; a user registered meanwhile who sorts before
-    it is still read, but the read cannot be extended past it, so its memory
-    stays bounded. `startedAt` and `completedAt` give its interval.
+    that existed when it began; a user registered meanwhile is read only if
+    its ID sorts after the batches already read and not after that ID, so the
+    read cannot be extended and its memory stays bounded. `startedAt` and
+    `completedAt` give its interval.
     (Expectation: performance; Expectation: reliability; [P9])
 
 Rules 1 and 7 for an action; an unlabelled arrow is the check passing:
@@ -142,8 +144,9 @@ Real store, in `apps/api/test/` (run as in
 - `admin-http.e2e-spec.ts`: bad input changes nothing; an unknown user with
   an invalid value is 404 and writes nothing; an oversized body to a route
   with a body is 413 with the `ApiError` shape; a Redis error reply from each
-  of the five actions is 500, not 503; 401 on every route and the
-  socket; an ID with uppercase, `_` and `-` survives ([P11]).
+  of the five actions is 500, not 503; 401 on every route, and the socket's
+  connection refused with "Unauthorized"; an ID with uppercase, `_` and `-`
+  survives ([P11]).
 - `read-model.e2e-spec.ts`: snapshot, detail, `x-count` and analytics agree;
   top users; histories across the hour, zero-filled; 100 recent requests kept.
 - `registry.e2e-spec.ts`: first, middle, last and past-the-end pages of 10001

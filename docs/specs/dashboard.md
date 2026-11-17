@@ -207,8 +207,9 @@ Vitest in jsdom (`npm test -w apps/web`), paths under `apps/web/src/`:
 5. With `npm run dev` still running, run `npm run seed:users -- --count 1000` in
    another terminal and reload: "Page 1 of 20 · 1000 matching users" and 50
    rows; "Next page" shows page 2, "Last page" page 20 with "Next page"
-   disabled; searching "user-777" shows one row; "Users per page" 100 shows
-   "Page 1 of 10"; the Total users card reads 1000 on every page.
+   disabled; searching "user-777" shows one row; with the search cleared,
+   "Users per page" 100 shows "Page 1 of 10"; the Total users card reads 1000
+   on every page.
 
 ## Limits
 

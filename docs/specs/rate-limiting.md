@@ -18,7 +18,9 @@ reliability, cited (Backend 5), (Core feature 1), (Expectation: reliability).
    transaction, so concurrent requests never pass it. (Backend 5; [P24])
 3. **Interpretation of "Limits each user to 100 requests per hour".** An
    admitted request uses one unit even if its handler fails; a rejected one
-   none: its row leaves it out and rule 10 removes its entry. (Backend 3)
+   none: its row leaves it out and rule 10 removes its entry. Until that
+   removal runs, or for the rest of the window if it fails, the entry still
+   counts against the user's later requests. (Backend 3)
 4. Over the cap while the stored suspension end is later than the request's
    clock reading, a request is admitted as bypassed and counted. The end time
    decides, not whether the key exists. (Core feature 3; [P12])
@@ -149,13 +151,17 @@ the whole 429: `Retry-After` up to 3600, `x-count: 0` and the body of rule 8.
 After `docker compose stop redis` a request gets 503 without `x-count` once the
 disconnect is detected; no total deadline is promised. After `start` and then
 `pause`, the same 503 comes within about 4 s ([platform](platform.md#behavior),
-rule 7); after `unpause` requests succeed again without a restart.
+rule 7); after `unpause` the API answers again without a restart:
+`curl -si localhost:3000/api/health | head -1` is 200, and the request above
+gets its 429 again, that user's hour being used up.
 
 ## Limits
 
 Mocked-store tests cannot show shared-store atomicity. A boundary burst of twice
 the cap is possible; bypassed requests and a failed cleanup leave entries above
-the cap until the key expires. One Redis only.
+the cap until the key expires. A rejected entry counts against concurrent
+requests until its removal runs, so a request sent at once after an extra grant
+can still be refused; no test covers that interleaving. One Redis only.
 
 [P2]: ../PITFALLS.md#p2-putting-the-used-count-in-x-count
 [P3]: ../PITFALLS.md#p3-a-status-threshold-that-only-works-for-round-limits

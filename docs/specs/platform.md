@@ -49,9 +49,11 @@ modes, on the host and in containers. Items are cited as
 7. **A Redis that stops answering after start-up is noticed within about
    4 s, with or without traffic**, and at once if it is stopped; a change of
    the system time neither causes nor hides it. Every command still waiting
-   fails, seen as the 503 of rule 6; the client reconnects every 500 ms and
-   the API serves again without a restart. (Expectation: reliability;
-   pitfall [P27])
+   fails: a request that needed its answer gets the 503 of rule 6, and
+   bookkeeping that fails this way keeps the admission or 429 already decided
+   ([rate limiting](rate-limiting.md#behavior), rule 10). The client
+   reconnects every 500 ms and the API serves again without a restart.
+   (Expectation: reliability; pitfall [P27])
 8. **Addition: `GET /api/health`, without a credential.** It answers 200
    `HealthResponse` when Redis answers a `PING`, else a 503 `ApiError`
    "Redis is not reachable." within the bound of rule 7. (Expectation:
@@ -79,12 +81,13 @@ modes, on the host and in containers. Items are cited as
     most 10 times; writers registering the same users at once register each
     once and refuse none. A batch with a malformed or repeated identity, the
     admin token or another user's token is refused whole, earlier batches
-    staying; at start-up that stops the API. The command prints one JSON line:
-    `processed`, `added` and `total`, or on exit 1 `processed`, `added` and
-    `error`, counting confirmed batches only, so a rerun resumes. A bad
-    `--count` exits 1 with the usage. Its connection neither queues nor
-    reconnects: refused, not accepted within 3 s, or with a command unanswered
-    for 3 s, it exits 1. (Expectation: reliability)
+    staying; at start-up that stops the API. The seed process prints one JSON
+    line: `processed`, `added` and `total`, or on exit 1 `processed`, `added`
+    and `error`, counting confirmed batches only, so a rerun resumes; run
+    through `npm run seed:users`, the output of npm and of the build comes
+    before it. A bad `--count` exits 1 with the usage. Its connection neither
+    queues nor reconnects: refused, not accepted within 3 s, or with a command
+    unanswered for 3 s, it exits 1. (Expectation: reliability)
 
 The start-up of rules 2, 5 and 12, and the outage of rule 7, in one picture:
 
