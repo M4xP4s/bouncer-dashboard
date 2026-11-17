@@ -141,6 +141,27 @@ it('isolates a history failure from held stats and recent requests and refreshes
   await waitFor(() => expect(client.detail).toHaveBeenCalledTimes(2));
 });
 
+it("shows the user's last reset time in the detail panel", async () => {
+  const { client, userDrawer } = setup();
+  // A manual reset inside the window, so it differs from the window start.
+  const resetByAdmin: UserRow = {
+    ...users[0],
+    lastResetAt: '2026-11-16T10:17:42.000Z',
+  };
+  client.detail.mockResolvedValue({ row: resetByAdmin, recentRequests: [] });
+  client.history.mockResolvedValue([]);
+  renderInMantine(
+    userDrawer('user-01', { rows: new Map([['user-01', resetByAdmin]]) }),
+  );
+
+  const stats = within(
+    await screen.findByRole('region', { name: 'User stats' }),
+  );
+  expect(
+    stats.getByText('Reset 11:00:00 UTC; last reset 10:17:42 UTC'),
+  ).toBeTruthy();
+});
+
 it('discards an old detail response on a user switch', async () => {
   const { client, live, userDrawer } = setup();
   const oldDetail = deferred<UserDetail>();
