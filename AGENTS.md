@@ -54,4 +54,6 @@ designing or changing a capability, and cite their IDs in reviews.
   evidence produced from this repository. State what was not verified.
 - Prefer the smallest complete solution. Add a service or dependency only for
   a concrete requirement.
-- Keep the code well commented, as the submission guidelines ask.
+- Keep the code well commented, as the submission guidelines ask, and
+  readable: follow [the coding rules](docs/CODING-RULES.md) and cite their IDs
+  in reviews.
