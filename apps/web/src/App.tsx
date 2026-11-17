@@ -11,6 +11,7 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type { RateLimitExceededEvent } from '@app/contracts';
+import { AnalyticsCards } from './features/analytics/AnalyticsCards.tsx';
 import { UserDrawer } from './features/detail/UserDetail.tsx';
 import { UsersTable } from './features/table/UsersTable.tsx';
 import { type Connection, useLiveUsers } from './live/useLiveUsers.ts';
@@ -150,6 +151,7 @@ function DashboardContent({ session }: { session: Session }) {
           lastUpdateAt={live.lastUpdateAt}
         />
       </Group>
+      <AnalyticsCards session={session} tick={live.tick} />
       <UsersTable
         rows={live.rows}
         snapshot={live.snapshot}
