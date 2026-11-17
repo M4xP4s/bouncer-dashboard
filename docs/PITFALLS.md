@@ -341,12 +341,20 @@ sequenceDiagram
     Note over Page: shows 1, which is wrong
 ```
 
+The mirror image is quieter. A flawed implementation drops an event whole
+when its row is not newer than the one on screen. A snapshot read just after
+a rejection can arrive before the `rate:limit_exceeded` of that rejection and
+already hold its version, so the alert is dropped with the row.
+
 **Guard:** both sources go through one ordering: a later window wins, then a
 higher version. A snapshot may replace a row of the same version, which is
 how a suspension that ended unobserved is repaired, and never a newer one.
+The ordering decides rows only: an alert reports that something happened, and
+is shown for every `rate:limit_exceeded` received.
 **Check:** browser environment: a snapshot delayed past an event leaves the
 event's row in place; a row of an earlier window is ignored whatever its
-version; a snapshot of the same version replaces the row.
+version; a snapshot of the same version replaces the row; an event whose
+version a snapshot already holds still shows its alert.
 
 ### P20. Taking a connection for delivery
 

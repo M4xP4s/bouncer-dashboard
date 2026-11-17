@@ -29,7 +29,7 @@ and [live updates](live-updates.md#behavior).
    it keeps the socket while the page or filters change, events cause no
    request and unmounting removes only its own listeners ([P21]). The header shows "Connecting…", "Live" or "Disconnected,
    reconnecting…" and, apart, "Last update HH:MM:SS UTC" or "No update yet"
-   ([P20]). An accepted `rate:limit_exceeded` also shows a red notification,
+   ([P20]). Every well-formed `rate:limit_exceeded` also shows a red notification,
    "Limit exceeded: <id>", with "Retry at HH:MM:SS UTC", for 5 seconds.
    (Core feature 1; Expectation: reliability)
 5. **Fixture mode.** With `VITE_FIXTURES=1` in development no API is needed:
