@@ -12,6 +12,26 @@ The project was developed in a private repository, specification first, with AI 
 
 The replay is in progress; the merged pull requests show how far it has come.
 
+## Commands
+
+Node.js 22.22.3 or later (the exact ranges are in `engines` in
+`package.json`), and Docker for Redis.
+
+```sh
+npm ci
+npm run build
+npm run lint
+npm test                            # needs nothing running
+```
+
+To run the API on the host:
+
+```sh
+docker compose up -d redis          # Redis on 127.0.0.1:6379
+cp .env.example .env                # demo values; each one is explained there
+npm run start:dev -w apps/api       # http://localhost:3000
+```
+
 ## Documentation
 
 - [Requirements](docs/REQUIREMENTS.md): the assignment brief and the additional expectations.
