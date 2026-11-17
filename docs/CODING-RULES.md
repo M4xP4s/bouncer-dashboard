@@ -97,9 +97,16 @@ const userId = this.config.userIdByToken.get(token);
 | N5 | Tie a count to the type it counts: `ROW_REPLY_COUNT: RowReplies['length'] = 5`, so the compiler catches a mismatch. |
 | N6 | Use the framework's constants: `HttpStatus.TOO_MANY_REQUESTS`, not `429`. |
 | N7 | Name an opaque expression: `clockTime(iso)`, not `iso.slice(11, 19)`. |
+| N8 | Compute values before a returned object literal; the literal only assigns names. No repeated lookups or nested calls inside it. |
+| N9 | A boolean is named for what it allows (`shouldNotify`), not for the case that usually produces it (`firstRejection`). |
 
-Tests keep literal values on purpose: they check the exact values sent, so a
-constant changed by mistake fails them.
+## Tests
+
+| ID | Rule |
+| --- | --- |
+| T1 | Tests keep literal values: they check the exact values sent, so a constant changed by mistake fails them. |
+| T2 | No `as never` or `as SomeType` on a fixture. Build a complete typed value, or configure the mock. |
+| T3 | Restore spies at file scope, so every test cleans up, not only one group. |
 
 ## Formatting
 
