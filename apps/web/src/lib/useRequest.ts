@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { oneAtATime, toError } from './async.ts';
 
 export interface RequestState<T> {
   data: T | undefined;
@@ -6,81 +7,65 @@ export interface RequestState<T> {
   loading: boolean;
 }
 
-/** One resource: key changes cancel; same-key refreshes queue once without hiding data. */
+const emptyState = <T>(key: string | null): RequestState<T> => ({
+  data: undefined,
+  error: null,
+  loading: key !== null,
+});
+
+/**
+ * Loads one resource. A new key cancels the old request and clears the
+ * data; a new tick reloads the same key and keeps the data shown meanwhile.
+ */
 export function useRequest<T>(
   key: string | null,
   load: (signal: AbortSignal) => Promise<T>,
   tick: number,
 ): RequestState<T> {
-  const [state, setState] = useState<RequestState<T>>({
-    data: undefined,
-    error: null,
-    loading: key !== null,
-  });
-  const loadRef = useRef(load);
-  const refreshRef = useRef<(() => void) | null>(null);
+  const [state, setState] = useState(() => emptyState<T>(key));
+  const reload = useRef<(() => void) | null>(null);
   const previous = useRef({ key, tick });
-
+  // A ref, so a new `load` function does not restart the request.
+  const loadRef = useRef(load);
   useEffect(() => {
     loadRef.current = load;
   }, [load]);
 
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- Reset the view when replacing the external request owner for a new key.
-    setState({ data: undefined, error: null, loading: key !== null });
+    // The request this effect owns is replaced, so its result goes too.
+    // oxlint-disable-next-line react/set-state-in-effect
+    setState(emptyState<T>(key));
     if (key === null) return;
-    let disposed = false;
-    let running = false;
-    let queued = false;
-    let controller: AbortController | null = null;
 
-    const refresh = async () => {
-      if (disposed) return;
-      if (running) {
-        queued = true;
-        return;
-      }
-      running = true;
-      controller = new AbortController();
-      const signal = controller.signal;
-      // Keep the last failure visible when a reconciliation was queued during this load.
+    const controller = new AbortController();
+    const { signal } = controller;
+    const run = oneAtATime(async () => {
+      if (signal.aborted) return;
+      // Only `loading` changes: a failure stays visible during the reload.
       setState((held) => ({ ...held, loading: true }));
       try {
         const data = await loadRef.current(signal);
-        if (!disposed && !signal.aborted)
-          setState({ data, error: null, loading: false });
-      } catch (error) {
-        if (!disposed && !signal.aborted) {
-          setState((held) => ({
-            ...held,
-            error:
-              error instanceof Error ? error : new Error('The request failed.'),
-            loading: false,
-          }));
-        }
-      } finally {
-        running = false;
-        if (queued && !disposed) {
-          queued = false;
-          void refresh();
-        }
+        if (!signal.aborted) setState({ data, error: null, loading: false });
+      } catch (thrown) {
+        if (signal.aborted) return;
+        const error = toError(thrown, 'The request failed.');
+        setState((held) => ({ ...held, error, loading: false }));
       }
-    };
-    refreshRef.current = () => {
-      void refresh();
-    };
-    void refresh();
+    });
+    reload.current = run;
+    run();
     return () => {
-      disposed = true;
-      controller?.abort();
-      refreshRef.current = null;
+      controller.abort();
+      reload.current = null;
     };
   }, [key]);
 
+  // A new key already loads above; only a new tick for the same key reloads.
   useEffect(() => {
-    if (previous.current.key === key && previous.current.tick !== tick)
-      refreshRef.current?.();
+    const sameKey = previous.current.key === key;
+    if (sameKey && previous.current.tick !== tick) reload.current?.();
     previous.current = { key, tick };
   }, [key, tick]);
+
   return state;
 }

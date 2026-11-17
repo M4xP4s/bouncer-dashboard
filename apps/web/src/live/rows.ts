@@ -46,3 +46,9 @@ export function applySnapshot(rows: Rows, snapshot: UserRow[]): Rows {
   for (const row of changed) next.set(row.userId, row);
   return next;
 }
+
+/** When the user's suspension ends, or null when throttling applies now. */
+export function suspensionEnd(row: UserRow, now: number): string | null {
+  const until = row.suspendedUntil;
+  return until !== null && Date.parse(until) > now ? until : null;
+}
