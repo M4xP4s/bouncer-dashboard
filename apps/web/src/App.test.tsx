@@ -86,7 +86,7 @@ it('connects with the token in the handshake, on its own origin', () => {
 /** Lets the page read that connecting started answer. */
 const settlePageRead = () => act(async () => {});
 
-it('shows a row when rate:update arrives, with the values the server sent', async () => {
+it('shows a row when rate:update arrives under the five headers and Actions', async () => {
   renderApp();
   signIn();
   socket.receive('connect');
@@ -104,6 +104,7 @@ it('shows a row when rate:update arrives, with the values the server sent', asyn
     'Reset Time',
     'Status',
     'Last Request',
+    'Actions',
   ]);
   const row = screen.getByRole('row', { name: /user-01/ });
   const cells = within(row)
@@ -115,6 +116,7 @@ it('shows a row when rate:update arrives, with the values the server sent', asyn
     expect.stringMatching(/^11:00:00 UTC/),
     'OK',
     '10:42:01 UTC',
+    '',
   ]);
 });
 

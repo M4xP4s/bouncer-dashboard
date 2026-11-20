@@ -1,0 +1,8 @@
+/* Imported after Mantine's stylesheet, so these rules win. Portals render
+   into body too, so the drawer and popovers inherit them. */
+body {
+  /* A step darker than the white cards, table and panel. */
+  background-color: var(--mantine-color-gray-0);
+  /* Digits of equal width keep columns of numbers aligned as they change. */
+  font-variant-numeric: tabular-nums;
+}

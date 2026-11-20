@@ -133,7 +133,9 @@ const storeMethods = [
   'addExtra',
 ] as const;
 const invalidListQueries = [
-  { reason: 'an unknown field', query: 'sort=used' },
+  { reason: 'an unknown field', query: 'order=closest' },
+  { reason: 'an unknown order', query: 'sort=usage' },
+  { reason: 'a repeated order', query: 'sort=id&sort=closest' },
   { reason: 'a repeated page', query: 'page=1&page=2' },
   { reason: 'a repeated search', query: 'search=a&search=b' },
   { reason: 'a nested field', query: 'search[x]=y' },
@@ -325,7 +327,14 @@ describe('admin HTTP', () => {
       .set('Authorization', 'Bearer admin');
 
     expect(reads.page).toHaveBeenCalledExactlyOnceWith(
-      { page: 1, pageSize: 50, search: '', status: 'any', active: 'any' },
+      {
+        page: 1,
+        pageSize: 50,
+        search: '',
+        status: 'any',
+        active: 'any',
+        sort: 'id',
+      },
       now,
     );
   });
@@ -333,12 +342,19 @@ describe('admin HTTP', () => {
   it('passes every list field on as a number or a string', async () => {
     await request(app.getHttpServer())
       .get(
-        '/admin/users?page=3&pageSize=100&search=Ab&status=Warning&active=1h',
+        '/admin/users?page=3&pageSize=100&search=Ab&status=Warning&active=1h&sort=closest',
       )
       .set('Authorization', 'Bearer admin');
 
     expect(reads.page).toHaveBeenCalledExactlyOnceWith(
-      { page: 3, pageSize: 100, search: 'Ab', status: 'Warning', active: '1h' },
+      {
+        page: 3,
+        pageSize: 100,
+        search: 'Ab',
+        status: 'Warning',
+        active: '1h',
+        sort: 'closest',
+      },
       now,
     );
   });

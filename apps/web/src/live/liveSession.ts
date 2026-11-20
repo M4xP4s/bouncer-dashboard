@@ -25,7 +25,7 @@ export type SnapshotState =
 type LiveRecords = ReadonlyMap<string, readonly RequestRecord[]>;
 
 export interface LiveState {
-  /** The rows of the page on screen and of the selected user. */
+  /** The rows of the page on screen, the selected user and the kept users. */
   rows: Rows;
   /** Null while the read of a new page or filter runs. */
   page: UsersPage | null;
@@ -49,8 +49,10 @@ export interface LiveView {
 export interface LiveSession {
   /** Applies the row of an HTTP response under the same ordering as events. */
   applyRow(row: UserRow): void;
-  /** Applies the row of the selected user's detail response. */
+  /** Applies the row of a held user's detail response. */
   applyDetailRow(row: UserRow): void;
+  /** The users whose rows stay held once the page drops them; none ends it. */
+  keep(userIds: readonly string[]): void;
   show(view: LiveView): void;
   refresh(): void;
   stop(): void;
@@ -62,6 +64,7 @@ type LiveEvent = RateUpdateEvent | RateLimitExceededEvent;
 
 const SNAPSHOT_INTERVAL_MS = 10 * SECOND_MS;
 const PENDING_USERS_MAX = 100;
+const NO_USER_IDS: ReadonlySet<string> = new Set();
 
 export const initialState = (): LiveState => ({
   rows: new Map(),
@@ -188,6 +191,8 @@ class SocketSession implements LiveSession {
   private held = initialState();
   private stopped = false;
   private view: LiveView;
+  // The users the table holds in place: at most the page they were held from.
+  private kept = NO_USER_IDS;
   // Rises with every new page or filter; a read of an older one is dropped.
   private generation = 0;
   private pageRead: AbortController | null = null;
@@ -225,15 +230,23 @@ class SocketSession implements LiveSession {
     if (this.isHeld(row.userId)) this.publishRows(this.rowsWith(row));
   }
 
-  // No page read covers a selected user who is off the page, so the detail
+  // No page read covers a held user who is off the page, so the detail
   // response repairs an equal row the way a snapshot does.
   applyDetailRow(row: UserRow): void {
     if (!this.active()) return;
-    if (this.isOnPage(row.userId) || row.userId !== this.view.selected) {
+    if (this.isOnPage(row.userId) || !this.isHeld(row.userId)) {
       this.applyRow(row);
       return;
     }
     const rows = applySnapshot(this.held.rows, [row]);
+    if (rows !== this.held.rows) this.publishRows(rows);
+  }
+
+  keep(userIds: readonly string[]): void {
+    if (!this.active()) return;
+    this.kept = new Set(userIds);
+    // Letting go drops the rows the page no longer lists.
+    const { rows } = this.heldFor(this.held.page);
     if (rows !== this.held.rows) this.publishRows(rows);
   }
 
@@ -299,10 +312,11 @@ class SocketSession implements LiveSession {
     if (pageVisible()) this.refresh();
   }
 
-  /** The users whose rows are held: those on `page` and the selected one. */
+  /** The users whose rows are held: on `page`, selected or kept. */
   private heldUserIds(page: UsersPage | null): ReadonlySet<string> {
     const userIds = new Set(page?.rows.map((row) => row.userId));
     if (this.view.selected !== null) userIds.add(this.view.selected);
+    for (const userId of this.kept) userIds.add(userId);
     return userIds;
   }
 
@@ -326,6 +340,8 @@ class SocketSession implements LiveSession {
   private startNewPage(): void {
     this.generation += 1;
     this.pageRead?.abort();
+    // A hold never outlasts its page, whichever effect of the table runs first.
+    this.kept = NO_USER_IDS;
     this.publish({
       ...this.heldFor(null),
       page: null,
@@ -384,7 +400,7 @@ class SocketSession implements LiveSession {
     if (!this.active()) return;
     // A known page's rows are held, so its events are already applied.
     if (this.held.page === null) this.pending.add(event.row);
-    // Off the page: nothing is kept.
+    // Not on the page, selected or kept: nothing of it is held.
     if (!this.isHeld(event.row.userId)) return;
     const rows = this.rowsWith(event.row);
     if (!rows) return;

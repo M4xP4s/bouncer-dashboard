@@ -111,6 +111,22 @@ check(
     Math.round((near.length / active.length) * 100),
   'analytics: nearLimitPercent',
 );
+// The counts are the rows per status and add up to every user.
+const countOf = (status: Status): number =>
+  users.filter((row) => row.status === status).length;
+(['OK', 'Warning', 'Exceeded'] as const).forEach((status) =>
+  check(
+    analytics.statusCounts[status] === countOf(status),
+    `analytics: statusCounts ${status}`,
+  ),
+);
+check(
+  analytics.statusCounts.OK +
+    analytics.statusCounts.Warning +
+    analytics.statusCounts.Exceeded ===
+    analytics.totalUsers,
+  'analytics: statusCounts add up to totalUsers',
+);
 // Ranked by usage only, like the API; equal users keep their order.
 const top = [...users]
   .sort((a, b) => b.used - a.used)

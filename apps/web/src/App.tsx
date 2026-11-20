@@ -10,12 +10,13 @@ import {
   Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import type { RateLimitExceededEvent } from '@app/contracts';
+import type { Analytics, RateLimitExceededEvent } from '@app/contracts';
 import { AnalyticsCards } from './features/analytics/AnalyticsCards.tsx';
 import { UserDrawer } from './features/detail/UserDetail.tsx';
 import { UsersTable } from './features/table/UsersTable.tsx';
 import { type Connection, useLiveUsers } from './live/useLiveUsers.ts';
 import { SECOND_MS, utcTime } from './lib/time.ts';
+import { useRequest } from './lib/useRequest.ts';
 import { useSession, type Session } from './api/useSession.ts';
 import { DEFAULT_USERS_QUERY } from './api/usersQuery.ts';
 
@@ -84,7 +85,7 @@ export default function App() {
   }, []);
 
   return (
-    <Container size="xl" py="xl">
+    <Container size="xl" py="lg">
       {token ? (
         <Dashboard key={token} token={token} onRefused={refuse} />
       ) : (
@@ -144,6 +145,16 @@ function DashboardContent({ session }: { session: Session }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState(DEFAULT_USERS_QUERY);
   const live = useLiveUsers(session, query, selected, showLimitAlert);
+  // One read feeds the cards and the Status counts, so the two agree.
+  const analytics = useRequest<Analytics>(
+    'analytics',
+    (signal) => session.client.analytics(signal),
+    live.tick,
+  );
+  const counts = analytics.data && {
+    all: analytics.data.totalUsers,
+    byStatus: analytics.data.statusCounts,
+  };
   return (
     <>
       <Group justify="space-between" mb="md">
@@ -153,7 +164,7 @@ function DashboardContent({ session }: { session: Session }) {
           lastUpdateAt={live.lastUpdateAt}
         />
       </Group>
-      <AnalyticsCards session={session} tick={live.tick} />
+      <AnalyticsCards analytics={analytics} />
       <UsersTable
         rows={live.rows}
         page={live.page}
@@ -162,6 +173,9 @@ function DashboardContent({ session }: { session: Session }) {
         snapshot={live.snapshot}
         now={live.now}
         onSelect={setSelected}
+        counts={counts}
+        session={session}
+        live={live}
       />
       <UserDrawer
         userId={selected}
@@ -190,7 +204,9 @@ function ConnectionStatus({
       <Badge role="status" color={connection === 'live' ? 'green' : 'orange'}>
         {CONNECTION_TEXT[connection]}
       </Badge>
-      <Text>{lastUpdate}</Text>
+      <Text size="sm" c="dimmed">
+        {lastUpdate}
+      </Text>
     </Group>
   );
 }

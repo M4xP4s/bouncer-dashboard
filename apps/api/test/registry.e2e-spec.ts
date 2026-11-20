@@ -113,6 +113,39 @@ describe('user registry and paged list', () => {
     expect(idsOf(found)).toEqual(['user-991', 'user-992']);
   });
 
+  it(
+    'puts the users at their limit first among 10001, whatever their ID, and counts every match',
+    async () => {
+      const api = application();
+      await seed(10000);
+      // The two IDs that sort last: user-9999 is Exceeded, user-9998 Warning.
+      expect(await seedRedis.zRange('rl:registry:ids', -2, -1)).toEqual([
+        'user-9998',
+        'user-9999',
+      ]);
+      await api
+        .admin('put', '/users/user-9999/limit', { limit: 1 })
+        .expect(200);
+      await api.sample('demo-token-9999').expect(200);
+      await api
+        .admin('put', '/users/user-9998/limit', { limit: 10 })
+        .expect(200);
+      await api.admitInTurn(9, 'demo-token-9998');
+
+      const first = await list('sort=closest&pageSize=2');
+
+      expect(idsOf(first)).toEqual(['user-9999', 'user-9998']);
+      expect(first.rows.map((row) => row.status)).toEqual([
+        'Exceeded',
+        'Warning',
+      ]);
+      expect(first.total).toBe(10001);
+      const third = await list('sort=closest&pageSize=2&page=3');
+      expect(third.rows.map((row) => row.status)).toEqual(['OK', 'OK']);
+    },
+    LARGE_POPULATION_TIMEOUT_MS,
+  );
+
   it('counts every registered user in analytics, whatever page was read', async () => {
     const api = application();
     await seed(1000);
@@ -241,6 +274,7 @@ describe('user registry and paged list', () => {
     'page=1&page=2',
     'pageSize=101',
     'status=invalid',
+    'sort=nope',
     'active=300000',
     'search[x]=y',
     'unknown=1',

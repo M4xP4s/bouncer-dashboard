@@ -524,6 +524,51 @@ it('leaves a row on the page to the page read, even for an equal detail response
   expect(result.current.rows.get('user-09')).toBe(suspended);
 });
 
+it('keeps the users the table holds in place once the page drops them, with their events, until let go', async () => {
+  const { result, client, connect, emitUpdate } = setup();
+  client.users.mockResolvedValue(pageOf(users.slice(0, 2)));
+  await connect();
+  act(() => result.current.keep(['user-01', 'user-02']));
+
+  client.users.mockResolvedValue(pageOf([users[1]]));
+  await act(async () => result.current.refresh());
+  expect(heldUserIds(result.current.rows).sort()).toEqual([
+    'user-01',
+    'user-02',
+  ]);
+
+  act(() => emitUpdate(requestUpdate));
+  expect(result.current.rows.get('user-01')).toBe(requestUpdate.row);
+
+  act(() => result.current.keep([]));
+  expect(heldUserIds(result.current.rows)).toEqual(['user-02']);
+});
+
+it('repairs a user held in place off the page from an equal detail response', async () => {
+  const { result, client, connect } = setup();
+  client.users.mockResolvedValue(pageOf([users[0], suspended]));
+  await connect();
+  act(() => result.current.keep(['user-01', 'user-09']));
+  client.users.mockResolvedValue(pageOf([users[0]]));
+  await act(async () => result.current.refresh());
+
+  act(() => result.current.applyDetailRow(suspensionEnded));
+
+  expect(result.current.rows.get('user-09')).toBe(suspensionEnded);
+});
+
+it('a new page drops the users held in place', async () => {
+  const { result, client, connect, rerender } = setup();
+  client.users.mockResolvedValue(pageOf(users.slice(0, 2)));
+  await connect();
+  act(() => result.current.keep(['user-01', 'user-02']));
+  client.users.mockReturnValueOnce(deferred<UsersPage>().promise);
+
+  rerender({ query: SECOND_PAGE, selected: null });
+
+  expect(heldUserIds(result.current.rows)).toEqual([]);
+});
+
 // One bad frame must not put an invalid row (unknown status, unreadable time)
 // into the live table, so it is ignored whole: no row, no record, no alert.
 it.each([

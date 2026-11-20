@@ -2,8 +2,13 @@ import { useEffect, useState } from 'react';
 import { BarChart } from '@mantine/charts';
 import {
   Alert,
+  Badge,
+  Box,
   Drawer,
+  Group,
   SegmentedControl,
+  SimpleGrid,
+  Stack,
   Table,
   Text,
   Title,
@@ -19,14 +24,23 @@ import type { Session } from '../../api/useSession.ts';
 import { suspensionEnd } from '../../live/rows.ts';
 import type { LiveUsers } from '../../live/useLiveUsers.ts';
 import { useRequest, type RequestState } from '../../lib/useRequest.ts';
-import { utcDateTime, utcTime } from '../../lib/time.ts';
+import { minutesUntil, utcDateTime, utcTime } from '../../lib/time.ts';
 import { AdminForms } from '../admin/AdminForms.tsx';
+import { STATUS_COLOR } from '../status.ts';
+import { UsageBar } from '../table/UsageBar.tsx';
 import { mergeRequests } from './mergeRequests.ts';
 
 const RANGE_OPTIONS: { label: string; value: HistoryRange }[] = [
   { label: 'Past hour', value: 'hour' },
   { label: 'Past day', value: 'day' },
 ];
+
+// Each outcome in the colour of the status it leads to.
+const OUTCOME_COLOR = {
+  allowed: 'green',
+  denied: 'red',
+  bypassed: 'yellow',
+} satisfies Record<RequestRecord['outcome'], string>;
 
 const HISTORY_SERIES = [
   { name: 'allowed', color: 'blue.6', label: 'Admitted' },
@@ -96,37 +110,65 @@ function DetailContent({
   return (
     <>
       {row && <UserStats row={row} now={live.now} />}
+      {/* Before the history, so the controls are found without scrolling. */}
+      <AdminForms userId={userId} session={session} live={live} />
       <HistorySection userId={userId} session={session} tick={live.tick} />
       <RecentRequests detail={detail} records={records} />
-      <AdminForms userId={userId} session={session} live={live} />
     </>
   );
 }
 
 function UserStats({ row, now }: { row: UserRow; now: number }) {
   const suspendedUntil = suspensionEnd(row, now);
-  const quota = [
-    `Used ${row.used}`,
-    `limit ${row.limit}`,
-    `extra ${row.extra}`,
-    `total ${row.total}`,
-    `remaining ${row.remaining}`,
-  ].join('; ');
+  const values: [label: string, value: string | number][] = [
+    ['Limit', row.limit],
+    ['Extra', row.extra],
+    ['Reset', `${utcTime(row.resetAt)} (${minutesUntil(row.resetAt, now)}m)`],
+    ['Last reset', utcTime(row.lastResetAt)],
+    ['Last request', row.lastRequestAt ? utcTime(row.lastRequestAt) : 'Never'],
+    [
+      'Suspension',
+      suspendedUntil ? `Until ${utcTime(suspendedUntil)}` : 'Not suspended',
+    ],
+  ];
   return (
-    <section aria-label="User stats">
-      <Title order={3}>{row.status}</Title>
-      <Text>{quota}</Text>
-      <Text>
-        Reset {utcTime(row.resetAt)}; last reset {utcTime(row.lastResetAt)}
+    <Stack component="section" aria-label="User stats" gap="xs">
+      <Group gap="sm" wrap="nowrap">
+        <Badge color={STATUS_COLOR[row.status]}>{row.status}</Badge>
+        <div style={{ flex: 1 }}>
+          <UsageBar used={row.used} total={row.total} status={row.status} />
+        </div>
+      </Group>
+      <Text>{`${row.used} used of ${row.total} · ${row.remaining} remaining`}</Text>
+      <SimpleGrid component="dl" cols={3} spacing="xs" m={0}>
+        {values.map(([label, value]) => (
+          <LabelledValue key={label} label={label} value={value} />
+        ))}
+      </SimpleGrid>
+    </Stack>
+  );
+}
+
+function LabelledValue({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | number;
+}) {
+  return (
+    <Box
+      bg="gray.0"
+      p="xs"
+      style={{ borderRadius: 'var(--mantine-radius-sm)' }}
+    >
+      <Text component="dt" size="xs" c="dimmed" tt="uppercase">
+        {label}
       </Text>
-      <Text>
-        Last request: {row.lastRequestAt ? utcTime(row.lastRequestAt) : 'Never'}
+      <Text component="dd" fw={600} m={0}>
+        {value}
       </Text>
-      <Text>
-        Suspension:{' '}
-        {suspendedUntil ? `until ${utcTime(suspendedUntil)}` : 'Not suspended'}
-      </Text>
-    </section>
+    </Box>
   );
 }
 
@@ -150,15 +192,16 @@ function HistorySection({
   );
   return (
     <section aria-label="History">
-      <Title order={3} mt="lg">
-        History
-      </Title>
-      <SegmentedControl
-        aria-label="History range"
-        value={range}
-        onChange={setRange}
-        data={RANGE_OPTIONS}
-      />
+      <Group gap="sm" mt="lg" mb="xs">
+        <Title order={3}>History</Title>
+        <SegmentedControl
+          aria-label="History range"
+          size="xs"
+          value={range}
+          onChange={setRange}
+          data={RANGE_OPTIONS}
+        />
+      </Group>
       {history.loading && !history.data && <Text>Loading history…</Text>}
       {history.error && (
         <Alert color="red">
@@ -226,7 +269,11 @@ function RecentRequests({
             {records.map((record) => (
               <Table.Tr key={record.id}>
                 <Table.Td>{utcDateTime(record.at)}</Table.Td>
-                <Table.Td>{record.outcome}</Table.Td>
+                <Table.Td>
+                  <Badge color={OUTCOME_COLOR[record.outcome]}>
+                    {record.outcome}
+                  </Badge>
+                </Table.Td>
                 <Table.Td>{record.remaining}</Table.Td>
               </Table.Tr>
             ))}

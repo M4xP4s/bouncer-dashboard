@@ -33,7 +33,21 @@ function byUserId(a: UserRow, b: UserRow): number {
   return a.userId < b.userId ? -1 : 1;
 }
 
-/** The rows that pass all three filters, in user ID order. */
+/**
+ * The larger share of the cap used first, equal shares by user ID. The
+ * shares are compared by cross-multiplying integers (`total` is at least 1),
+ * so 1 of 3 and 33 of 99 tie exactly.
+ */
+function byClosest(a: UserRow, b: UserRow): number {
+  return b.used * a.total - a.used * b.total || byUserId(a, b);
+}
+
+const ORDERS: Record<UsersQuery['sort'], (a: UserRow, b: UserRow) => number> = {
+  id: byUserId,
+  closest: byClosest,
+};
+
+/** The rows that pass all three filters, in the order the query asks for. */
 function filterUsers(
   rows: UserRow[],
   query: UsersQuery,
@@ -46,10 +60,10 @@ function filterUsers(
         matchesStatus(row, query.status) &&
         wasActiveWithin(row, query.active, now),
     )
-    .sort(byUserId);
+    .sort(ORDERS[query.sort]);
 }
 
-/** The page the admin API answers: filters first, then the cut. */
+/** The page the admin API answers: filters, then the order, then the cut. */
 export function usersPage(
   rows: UserRow[],
   query: UsersQuery,

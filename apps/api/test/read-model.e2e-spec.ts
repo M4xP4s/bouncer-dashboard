@@ -1,4 +1,9 @@
-import type { Analytics, HistoryBucket, HistoryRange } from '@app/contracts';
+import type {
+  Analytics,
+  HistoryBucket,
+  HistoryRange,
+  Status,
+} from '@app/contracts';
 import {
   bodyOf,
   HOUR_MS,
@@ -98,6 +103,23 @@ describe('dashboard read models', () => {
       { userId: 'user-04', used: 2, total: 100 },
       { userId: 'user-05', used: 1, total: 100 },
     ]);
+  });
+
+  it('counts users at each status as the snapshot rows of the same moment show them', async () => {
+    const api = application();
+    await useQuotas(api);
+
+    const { statusCounts, totalUsers } = await analyticsOf(api);
+    const rows = await api.snapshot();
+
+    expect(statusCounts).toEqual({ OK: 4, Warning: 1, Exceeded: 1 });
+    const statuses: Status[] = ['OK', 'Warning', 'Exceeded'];
+    for (const status of statuses) {
+      expect(statusCounts[status]).toBe(
+        rows.filter((row) => row.status === status).length,
+      );
+    }
+    expect(rows).toHaveLength(totalUsers);
   });
 
   it('turns a user to Warning at 90 of 100 in the header, detail and analytics', async () => {

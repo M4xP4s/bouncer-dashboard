@@ -67,6 +67,7 @@ const MAX_PAGE_SIZE = 100;
 const MAX_PAGE = Math.floor(Number.MAX_SAFE_INTEGER / MAX_PAGE_SIZE);
 const MAX_SEARCH_LENGTH = 64;
 const STATUS_FILTERS: (Status | 'any')[] = ['any', 'OK', 'Warning', 'Exceeded'];
+const SORT_ORDERS: UsersQuery['sort'][] = ['id', 'closest'];
 const ACTIVE_FILTERS: (ActivePeriod | 'any')[] = ['any', '5m', '1h', '24h'];
 const DECIMAL_DIGITS = /^\d+$/;
 
@@ -103,6 +104,7 @@ class UsersQueryParams implements UsersQuery {
   @IsString() @MaxLength(MAX_SEARCH_LENGTH) search = '';
   @IsIn(STATUS_FILTERS) status: UsersQuery['status'] = 'any';
   @IsIn(ACTIVE_FILTERS) active: UsersQuery['active'] = 'any';
+  @IsIn(SORT_ORDERS) sort: UsersQuery['sort'] = 'id';
 }
 
 const allowedKeyByBody = new Map<unknown, string>([

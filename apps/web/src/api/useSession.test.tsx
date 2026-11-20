@@ -128,12 +128,13 @@ function mockLive(): LiveUsers {
     tick: 0,
     applyRow: vi.fn(),
     applyDetailRow: vi.fn(),
+    keep: vi.fn(),
     refresh: vi.fn(),
   };
 }
 
 const USERS_PATH =
-  '/api/admin/users?page=1&pageSize=50&search=&status=any&active=any';
+  '/api/admin/users?page=1&pageSize=50&search=&status=any&active=any&sort=closest';
 
 /** The body for a path; its row ID and user count tell the tokens apart. */
 function body(path: string, owner: 'old' | 'new'): unknown {

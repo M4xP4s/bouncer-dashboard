@@ -28,6 +28,7 @@ function renderForms() {
     tick: 0,
     applyRow: vi.fn(),
     applyDetailRow: vi.fn(),
+    keep: vi.fn(),
     refresh: vi.fn(),
   };
   render(<AdminForms userId="user-01" session={session} live={live} />, {

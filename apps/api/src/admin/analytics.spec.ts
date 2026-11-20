@@ -73,4 +73,17 @@ describe('AnalyticsTally', () => {
     expect(summaryOf([marked]).nearLimitPercent).toBe(100);
     expect(summaryOf([clear]).nearLimitPercent).toBe(0);
   });
+
+  it('counts every user at its status, idle ones as OK, adding up to the total', () => {
+    const result = summaryOf([
+      row('idle', 0),
+      row('active', 1),
+      row('warning', 90),
+      row('exceeded', 100),
+      row('over', 130),
+    ]);
+
+    expect(result.statusCounts).toEqual({ OK: 2, Warning: 1, Exceeded: 2 });
+    expect(result.totalUsers).toBe(5);
+  });
 });

@@ -131,6 +131,21 @@ it('keeps the table live after closing the labelled drawer and restores focus', 
   expect(tableRow('user-01').getByText('87 / 100')).toBeTruthy();
 });
 
+it('returns focus to the ID button after a click elsewhere on its row opened the drawer', async () => {
+  await openDashboard();
+  fireEvent.click(tableRow('user-01').getByText('OK'));
+  await advance(DRAWER_SETTLED_MS);
+  const close = screen.getByRole('button', { name: 'Close user details' });
+  close.focus();
+
+  fireEvent.keyDown(close, { key: 'Escape' });
+  await advance(DRAWER_SETTLED_MS);
+
+  expect(document.activeElement).toBe(
+    screen.getByRole('button', { name: 'user-01' }),
+  );
+});
+
 it('announces a current exceeded event', async () => {
   await openDashboard();
 
@@ -182,7 +197,7 @@ it('applies an action to the original held row after opening another user', asyn
 
   expect(tableRow('user-01').getByText('100 / 100')).toBeTruthy();
   expect(tableRow('user-02').getByText('50 / 100')).toBeTruthy();
-  expect(screen.getByText(/Used 50; limit 100/)).toBeTruthy();
+  expect(screen.getByText('50 used of 100 · 50 remaining')).toBeTruthy();
 });
 
 it('reconciles a failed action after its form was closed without leaking the error into another user', async () => {
@@ -206,7 +221,7 @@ it('reconciles a failed action after its form was closed without leaking the err
   expect(client.reset).toHaveBeenCalledTimes(1);
   expect(client.users).toHaveBeenCalledTimes(1);
   expect(tableRow('user-01').getByText('100 / 100')).toBeTruthy();
-  expect(screen.getByText(/Used 50; limit 100/)).toBeTruthy();
+  expect(screen.getByText('50 used of 100 · 50 remaining')).toBeTruthy();
   expect(screen.queryByText('Reset outcome uncertain')).toBeNull();
 });
 

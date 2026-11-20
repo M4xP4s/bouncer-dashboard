@@ -55,10 +55,13 @@ export function useLiveUsers(
   const applyDetailRow = useCallback((row: UserRow) => {
     live.current?.applyDetailRow(row);
   }, []);
+  const keep = useCallback((userIds: readonly string[]) => {
+    live.current?.keep(userIds);
+  }, []);
   const refresh = useCallback(() => {
     live.current?.refresh();
   }, []);
-  return { ...state, applyRow, applyDetailRow, refresh };
+  return { ...state, applyRow, applyDetailRow, keep, refresh };
 }
 
 export type LiveUsers = ReturnType<typeof useLiveUsers>;
