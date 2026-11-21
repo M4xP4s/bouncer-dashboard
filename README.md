@@ -15,9 +15,9 @@ A per-user API rate limiter built as a NestJS interceptor, with a live React and
 
 What it is not: the tokens are demo credentials, there is one Redis without failover, live events are best effort and repaired by snapshot reads, and every check is a bounded run on one machine, without TLS and without a load test. Each specification ends in a Limits section. [What it does not do](docs/NOT-DOING.md) gathers them, with the reason for each.
 
-![The dashboard, signed in: four analytics cards (total users, share near the limit, 429 responses today, top users), the search field and filters, paging controls, and the live user table with rows at OK, Warning and Exceeded.](docs/images/dashboard.png)
+![The dashboard, signed in: four analytics cards (total users 1000, 40% near the limit, one 429 response today, the five top users with usage bars); the Status choice reading All 1000, Exceeded 1, Warning 1, OK 998 beside the Last active, Sort (Closest to limit) and search fields; and the live user table, where the Exceeded user-06 and the Warning user-05 head the list on tinted rows, each with a usage bar and the buttons Add extra and Reset usage, above the OK rows.](docs/images/dashboard.png)
 
-The dashboard with 1000 seeded users, after the demo traffic of [Try it](#try-it).
+The dashboard with 1000 seeded users, after the demo traffic of [Try it](#try-it). The users closest to their limit come first, and a row at Warning or Exceeded carries its two quickest remedies.
 
 ## Try it
 
@@ -35,9 +35,9 @@ node scripts/traffic.mjs http://127.0.0.1:3000    # five users: three OK, one Wa
 docker compose down -v              # stops both and deletes the Redis data
 ```
 
-Selecting a user opens its detail: usage and limit, the last reset, a history chart, the recent requests and, below them, the admin actions.
+Selecting a user opens its detail: status and usage, limit and reset times, the admin actions, then a history chart and the recent requests.
 
-![The detail panel of user-05 over the dashboard: status Warning, used 92 of 100, reset and last-request times, a bar chart of the past hour and the list of recent requests with their outcome and remaining quota.](docs/images/dashboard-detail.png)
+![The detail panel of user-05 over the dashboard: the badge Warning beside a usage bar, 92 used of 100 with 8 remaining, six labelled values (limit, extra, reset, last reset, last request, suspension), the admin actions Reset usage, Resume throttling, Add extra, Set limit and Suspend, then a bar chart of the past hour and the start of the recent requests.](docs/images/dashboard-detail.png)
 
 The demo values are in `.env.example`, which also explains each variable. The other run modes are under [Run it](#run-it).
 
@@ -101,6 +101,7 @@ Each decision is argued, with its alternatives and cost, in the specification it
 | Admin API     | [Each action is one transaction ending in a row read](docs/specs/admin-api.md#admin-writes-and-admission)                               | `WATCH` with retry; a lock; scripts                    | The write also queues the read                                                                                       |
 |               | [Usage, limit and grant in separate keys](docs/specs/admin-api.md#usage-limit-and-grant-apart)                                          | One counter                                            | Five commands per row read                                                                                           |
 |               | [Numbered pages, filtered by reading users in batches](docs/specs/admin-api.md#numbered-pages-filtered-by-reading-in-batches)           | A cursor; filtering in the browser; per-status indexes | Filtered pages and analytics take longer as users grow                                                               |
+|               | [Closest to the limit first, sorted on every read](docs/specs/admin-api.md#closest-to-the-limit-first-sorted-on-every-read)             | A sorted set kept by admission; sorting in the browser | Such a page reads every user, so it takes longer as users grow                                                       |
 | Live updates  | [Events carry the full row and a per-user version](docs/specs/live-updates.md#full-row-with-a-version)                                  | Events that only name a user; timestamps               | Larger messages                                                                                                      |
 |               | [One alert per window, re-armed by a generation](docs/specs/live-updates.md#one-alert-per-window-re-armed-by-a-generation)              | Deleting the flag; re-arming on a raised limit         | Lowering a limit can alert again that hour                                                                           |
 |               | [Newer means later window, then higher version](docs/specs/live-updates.md#window-then-version-snapshots-repair)                        | Last arrival wins                                      | A snapshot read every 10 s while a dashboard is visible; page membership waits for it; a bounded buffer drops events |
@@ -202,34 +203,34 @@ docker stop bouncer-test-redis
 
 Without `TEST_REDIS_URL` the first two fall back to database 1 of the Compose Redis, which nothing else may then use; the population check refuses to start.
 
-The last full run, on one laptop, at the revision the record names:
+The last runs, on one laptop, at the revisions the record names. The first five rows were repeated after the closest-first order was added, and `npm test` once more after the held rows of the table were changed; the last row is from the full run before it:
 
 | Check                                             | Result                                                                                                                                                                  |
 | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm test`                                        | 296 API tests in 17 files and 128 dashboard tests in 14 files passed                                                                                                    |
-| `npm run check:contracts`                         | 134 fixture checks passed                                                                                                                                               |
-| `npm run test:integration`                        | 81 tests in 14 files passed against a real Redis, five runs in a row                                                                                                    |
+| `npm test`                                        | 306 API tests in 17 files and 182 dashboard tests in 15 files passed                                                                                                    |
+| `npm run check:contracts`                         | 138 fixture checks passed                                                                                                                                               |
+| `npm run test:integration`                        | 84 tests in 14 files passed against a real Redis, five runs in a row                                                                                                    |
 | `npm run check:two-process`                       | 200 requests at once for one user over two API processes: 100 admitted, 100 rejected, 0 other; three runs                                                               |
-| `npm run check:population`                        | The list page, a filtered page and the analytics timed at 1000 and 10000 registered users; three runs                                                                   |
+| `npm run check:population`                        | The list page, a filtered page, a page ordered closest to the limit and the analytics timed at 1000 and 10000 registered users; three runs                              |
 | `docker compose up --build --wait`, then Chromium | Both containers healthy. Of 14 browser items, 12 passed; the hidden tab was not checked, and the console held one unexplained WebSocket warning after a refused sign-in |
 
 ```mermaid
 xychart-beta
     title "Tests passed, by suite"
     x-axis ["API", "Dashboard", "Integration"]
-    y-axis "Tests" 0 --> 300
-    bar [296, 128, 81]
+    y-axis "Tests" 0 --> 350
+    bar [306, 182, 84]
 ```
 
 ```mermaid
 xychart-beta
     title "Median time of one admin read, by registered users"
-    x-axis ["page 1k", "page 10k", "filtered 1k", "filtered 10k", "analytics 1k", "analytics 10k"]
-    y-axis "Milliseconds" 0 --> 150
-    bar [3.8, 2.9, 18.6, 129.6, 17.7, 128.2]
+    x-axis ["page 1k", "page 10k", "filtered 1k", "filtered 10k", "closest 1k", "closest 10k", "analytics 1k", "analytics 10k"]
+    y-axis "Milliseconds" 0 --> 175
+    bar [3.4, 2.9, 16.8, 130, 15.6, 131.4, 14.4, 150]
 ```
 
-Each bar is the median of three runs, and each run is the median of ten sequential HTTP reads of one admin route on one API process: an unfiltered page reads only its own rows and stays flat, while a filtered page and the analytics read every registered user and grow with the population. It is not admission latency and not a load test.
+Each bar is the median of three runs, and each run is the median of ten sequential HTTP reads of one admin route on one API process: an unfiltered page in ID order reads only its own rows and stays flat, while a filtered page, a page ordered closest to the limit (the dashboard's default) and the analytics read every registered user and grow with the population. It is not admission latency and not a load test.
 
 Verification covers bounded concurrency and population runs on one machine. Sustained load, more than one host and TLS were not checked; each specification's Limits section says what it does not prove.
 

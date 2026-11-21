@@ -3,7 +3,7 @@ import { mockDeep, mockReset } from 'vitest-mock-extended';
 import { RateLimitStore } from '../rate-limit/rate-limit.store.js';
 import { buildRow } from '../rate-limit/row.js';
 import { UserRegistry } from '../users/user-registry.js';
-import { UserReads } from './user-reads.js';
+import { closestOf, UserReads } from './user-reads.js';
 
 const now = Date.parse('2099-01-01T10:30:00.000Z');
 const registry = mockDeep<UserRegistry>();
@@ -16,6 +16,7 @@ const anyQuery: UsersQuery = {
   search: '',
   status: 'any',
   active: 'any',
+  sort: 'id',
 };
 
 // used 0 is OK, 90 is Warning, 101 is Exceeded with the default cap of 100.
@@ -128,6 +129,140 @@ describe('UserReads', () => {
       expect(page.total).toBe(expected.length);
     },
   );
+
+  describe('sorted closest to the limit', () => {
+    // Each ID with its used and total, in the batches the registry yields.
+    const shares: Record<string, [number, number]> = {
+      'user-01': [99, 100],
+      'user-02': [30, 10],
+      'user-03': [104, 110],
+      'user-04': [90, 100],
+      'user-05': [100, 100],
+      'user-06': [130, 100],
+      'user-07': [18, 20],
+    };
+
+    function readShares(entries: Record<string, [number, number]>) {
+      store.snapshot.mockImplementation(async (userIds) =>
+        userIds.map((userId) => {
+          const [used, total] = entries[userId];
+          return buildRow(userId, [used, `${total}`, null, null, {}], now);
+        }),
+      );
+    }
+
+    beforeEach(() => {
+      readShares(shares);
+      registryIn(
+        ['user-01', 'user-02', 'user-03', 'user-04'],
+        ['user-05', 'user-06', 'user-07'],
+      );
+    });
+
+    it('orders every batch by the share of the cap used, not by the count, equal shares by ID', async () => {
+      const page = await reads.page({ ...anyQuery, sort: 'closest' }, now);
+
+      expect(idsOf(page.rows)).toEqual([
+        'user-02',
+        'user-06',
+        'user-05',
+        'user-01',
+        'user-03',
+        'user-04',
+        'user-07',
+      ]);
+      expect(page.total).toBe(7);
+      expect(registry.page).not.toHaveBeenCalled();
+    });
+
+    it('keeps equal shares of different caps in ID order', async () => {
+      readShares({ 'user-01': [33, 99], 'user-02': [1, 3] });
+      registryIn(['user-01'], ['user-02']);
+
+      const page = await reads.page({ ...anyQuery, sort: 'closest' }, now);
+
+      expect(idsOf(page.rows)).toEqual(['user-01', 'user-02']);
+    });
+
+    it('cuts the page after the filter and the order, and counts every match', async () => {
+      const query: UsersQuery = {
+        ...anyQuery,
+        sort: 'closest',
+        status: 'Warning',
+        pageSize: 2,
+        page: 2,
+      };
+      readShares({
+        'user-01': [90, 100],
+        'user-02': [95, 100],
+        'user-03': [99, 100],
+        'user-04': [18, 20],
+        'user-05': [5, 100],
+        'user-06': [130, 100],
+        'user-07': [0, 100],
+      });
+
+      const page = await reads.page(query, now);
+
+      // Warning by share: user-03, user-02, then user-01 and user-04 by ID.
+      expect(idsOf(page.rows)).toEqual(['user-01', 'user-04']);
+      expect(page.total).toBe(4);
+    });
+
+    it('puts the closest rows of a later batch before worse ones read earlier', async () => {
+      const query: UsersQuery = { ...anyQuery, sort: 'closest', pageSize: 2 };
+
+      const page = await reads.page(query, now);
+
+      // user-06 and user-05 come in the second batch.
+      expect(idsOf(page.rows)).toEqual(['user-02', 'user-06']);
+      expect(page.total).toBe(7);
+    });
+
+    it('cuts a page that spans two batches, and counts every match', async () => {
+      const query: UsersQuery = {
+        ...anyQuery,
+        sort: 'closest',
+        pageSize: 2,
+        page: 2,
+      };
+
+      const page = await reads.page(query, now);
+
+      // user-05 from the second batch, user-01 from the first.
+      expect(idsOf(page.rows)).toEqual(['user-05', 'user-01']);
+      expect(page.total).toBe(7);
+    });
+
+    it('answers a page past the end with no rows and the count of matches', async () => {
+      const query: UsersQuery = {
+        ...anyQuery,
+        sort: 'closest',
+        pageSize: 5,
+        page: 3,
+      };
+
+      const page = await reads.page(query, now);
+
+      expect(page.rows).toEqual([]);
+      expect(page.total).toBe(7);
+    });
+
+    it('keeps no more rows than the depth of the page between batches', () => {
+      const row = (userId: string) => {
+        const [used, total] = shares[userId];
+        return buildRow(userId, [used, `${total}`, null, null, {}], now);
+      };
+      const kept = [row('user-05'), row('user-04')];
+      const batch = [row('user-07'), row('user-02'), row('user-01')];
+
+      expect(idsOf(closestOf(kept, batch, 3))).toEqual([
+        'user-02',
+        'user-05',
+        'user-01',
+      ]);
+    });
+  });
 
   it('adds up analytics over every batch, read at the start time', async () => {
     store.denied429.mockResolvedValue(4);

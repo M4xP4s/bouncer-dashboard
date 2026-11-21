@@ -8,6 +8,7 @@ import { analytics, NOW, users } from '../../fixtures/index.ts';
 import { DEFAULT_USERS_QUERY } from '../../api/usersQuery.ts';
 import { mockSocket, pageOf } from '../../lib/test-helpers.ts';
 import { useLiveUsers } from '../../live/useLiveUsers.ts';
+import { useRequest } from '../../lib/useRequest.ts';
 import { AnalyticsCards } from './AnalyticsCards.tsx';
 
 vi.mock('../../api/index.ts', () => ({
@@ -28,9 +29,15 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** Loads analytics on each tick, as the dashboard does. */
 function LiveAnalytics({ session }: { session: Session }) {
   const live = useLiveUsers(session, DEFAULT_USERS_QUERY, null);
-  return <AnalyticsCards session={session} tick={live.tick} />;
+  const analytics = useRequest(
+    'analytics',
+    (signal) => session.client.analytics(signal),
+    live.tick,
+  );
+  return <AnalyticsCards analytics={analytics} />;
 }
 
 function renderLiveAnalytics() {
@@ -123,4 +130,32 @@ it('keeps a 10-second HTTP timeout visible through the queued refresh until reco
   expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.getByText('64%')).toBeTruthy();
   expect(screen.getByText('Updated 10:42:00 UTC')).toBeTruthy();
+});
+
+it('shows a 64-character ID in Top users in full, never cut', () => {
+  const longId =
+    'tenant-with-a-long-identifier-from-an-upstream-system-0000000001';
+  const nextId =
+    'tenant-with-a-long-identifier-from-an-upstream-system-0000000002';
+  const topUsers = [
+    { userId: longId, used: 90, total: 100 },
+    { userId: nextId, used: 80, total: 100 },
+  ];
+  render(
+    <AnalyticsCards
+      analytics={{
+        data: { ...analytics, topUsers },
+        error: null,
+        loading: false,
+      }}
+    />,
+    { wrapper: MantineProvider },
+  );
+
+  const id = screen.getByText(longId);
+  expect(id.textContent).toBe(longId);
+  expect(id.getAttribute('data-truncate')).toBeNull();
+  expect(id.getAttribute('title')).toBeNull();
+  expect(id.style.overflowWrap).toBe('anywhere');
+  expect(screen.getByText(nextId).textContent).toBe(nextId);
 });

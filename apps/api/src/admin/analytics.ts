@@ -1,4 +1,10 @@
-import type { Analytics, ReadInterval, TopUser, UserRow } from '@app/contracts';
+import type {
+  Analytics,
+  ReadInterval,
+  Status,
+  TopUser,
+  UserRow,
+} from '@app/contracts';
 import { utcDay } from '../rate-limit/keys.js';
 
 const TOP_USER_COUNT = 5;
@@ -11,10 +17,17 @@ export class AnalyticsTally {
   private activeUsers = 0;
   private nearLimitUsers = 0;
   private topUsers: TopUser[] = [];
+  private statusCounts: Record<Status, number> = {
+    OK: 0,
+    Warning: 0,
+    Exceeded: 0,
+  };
 
   add(rows: readonly UserRow[]): void {
     this.totalUsers += rows.length;
     for (const row of rows) {
+      // Idle users count too, as OK.
+      this.statusCounts[row.status]++;
       if (row.used === 0) continue;
       this.activeUsers++;
       if (row.status !== 'OK') this.nearLimitUsers++;
@@ -32,6 +45,7 @@ export class AnalyticsTally {
       denied429Today,
       day,
       topUsers: this.topUsers,
+      statusCounts: { ...this.statusCounts },
     };
   }
 

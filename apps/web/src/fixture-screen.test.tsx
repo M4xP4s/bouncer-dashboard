@@ -75,6 +75,12 @@ it('renders dated fixtures years later and refreshes table, details, history and
   expect(tableRow('user-01').getByText('OK')).toBeTruthy();
   expect(tableRow('user-04').getByText('Warning')).toBeTruthy();
   expect(tableRow('user-06').getByText('Exceeded')).toBeTruthy();
+  const status = within(screen.getByRole('radiogroup', { name: 'Status' }));
+  expect(
+    status
+      .getAllByRole<HTMLInputElement>('radio')
+      .map((radio) => radio.labels?.[0]?.textContent),
+  ).toEqual(['All 12', 'Exceeded 3', 'Warning 4', 'OK 5']);
 
   fireEvent.click(suspended.getByRole('button', { name: 'user-09' }));
   // The fixture client replies after 150 ms.

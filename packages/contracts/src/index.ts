@@ -92,13 +92,20 @@ export interface ReadInterval {
 
 export type ActivePeriod = '5m' | '1h' | '24h';
 
-/** Query of `GET /api/admin/users`. Filters apply to every registered user before the page is cut. */
+/**
+ * Order of the user list. `id`: plain string order of the user ID.
+ * `closest`: the larger share of `total` used first, equal shares by ID.
+ */
+export type UsersSort = 'id' | 'closest';
+
+/** Query of `GET /api/admin/users`. Filters apply to every registered user, then the order, then the page is cut. */
 export interface UsersQuery {
   page: number;
   pageSize: number;
   search: string;
   status: Status | 'any';
   active: ActivePeriod | 'any';
+  sort: UsersSort;
 }
 
 /** Body of `GET /api/admin/users`. `total` counts every match, not only this page. */
@@ -134,6 +141,8 @@ export interface Analytics extends ReadInterval {
   day: string;
   /** Up to five users with the highest `used`; equal usage by user ID. */
   topUsers: TopUser[];
+  /** Registered users at each status, idle ones as OK; adds up to `totalUsers`. */
+  statusCounts: Record<Status, number>;
 }
 
 // ---------------------------------------------------------- socket events

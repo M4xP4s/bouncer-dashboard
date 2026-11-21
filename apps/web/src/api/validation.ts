@@ -146,6 +146,9 @@ function isTopUser(value: unknown): value is TopUser {
   );
 }
 
+const isStatusCounts = (value: unknown): value is Record<Status, number> =>
+  isObject(value) && STATUSES.every((status) => isCount(value[status]));
+
 export function isAnalytics(value: unknown): value is Analytics {
   return (
     isObject(value) &&
@@ -158,7 +161,8 @@ export function isAnalytics(value: unknown): value is Analytics {
     typeof value.day === 'string' &&
     ISO_DAY.test(value.day) &&
     Array.isArray(value.topUsers) &&
-    value.topUsers.every(isTopUser)
+    value.topUsers.every(isTopUser) &&
+    isStatusCounts(value.statusCounts)
   );
 }
 

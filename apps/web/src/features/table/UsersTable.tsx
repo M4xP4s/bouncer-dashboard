@@ -2,55 +2,54 @@ import {
   Alert,
   Badge,
   Button,
+  getDefaultZIndex,
   Group,
-  Select,
+  Paper,
   Table,
   Text,
-  TextInput,
 } from '@mantine/core';
-import { useEffect } from 'react';
+import { type RefObject, useEffect, useRef, useState } from 'react';
 import type { Status, UserRow, UsersPage, UsersQuery } from '@app/contracts';
-import {
-  FIRST_PAGE,
-  SEARCH_MAX_LENGTH,
-  lastPage,
-} from '../../api/usersQuery.ts';
+import type { Client } from '../../api/index.ts';
+import { FIRST_PAGE, lastPage } from '../../api/usersQuery.ts';
+import type { Session } from '../../api/useSession.ts';
 import { pageRows, suspensionEnd, type Rows } from '../../live/rows.ts';
-import type { SnapshotState } from '../../live/useLiveUsers.ts';
+import type { LiveUsers, SnapshotState } from '../../live/useLiveUsers.ts';
 import { minutesUntil, utcTime } from '../../lib/time.ts';
+import { useOneAction } from '../admin/useOneAction.ts';
+import { STATUS_COLOR } from '../status.ts';
+import { RowActions, type RowAction } from './RowActions.tsx';
+import {
+  PageFooter,
+  TableToolbar,
+  type StatusCounts,
+} from './TableControls.tsx';
+import { UsageBar } from './UsageBar.tsx';
+import { type HeldOrder, useHeldOrder } from './useHeldOrder.ts';
 
-const STATUS_COLOR = {
-  OK: 'green',
-  Warning: 'yellow',
-  Exceeded: 'red',
-} satisfies Record<Status, string>;
-
-interface Option<T extends string> {
-  value: T;
-  label: string;
-}
-
-const STATUS_OPTIONS: Option<UsersQuery['status']>[] = [
-  { value: 'any', label: 'Any' },
-  { value: 'OK', label: 'OK' },
-  { value: 'Warning', label: 'Warning' },
-  { value: 'Exceeded', label: 'Exceeded' },
-];
-
-const ACTIVE_OPTIONS: Option<UsersQuery['active']>[] = [
-  { value: 'any', label: 'Any time' },
-  { value: '5m', label: 'Last 5 minutes' },
-  { value: '1h', label: 'Last hour' },
-  { value: '24h', label: 'Last 24 hours' },
-];
-
-const PAGE_SIZE_OPTIONS = ['25', '50', '100'];
-
-/** The typed value of the option a Select reports as a plain string. */
-const chosen = <T extends string>(
-  options: Option<T>[],
-  value: string | null,
-): T => (options.find((option) => option.value === value) ?? options[0]).value;
+// Wide enough for the bar to read as a share beside "Remaining / Total".
+const BAR_WIDTH = 96;
+// User IDs run to 64 characters: the ID wraps anywhere, so the badge, the
+// counts and the times beside it keep their width and stay on one line.
+const ID_BUTTON_STYLES = {
+  root: { height: 'auto' },
+  inner: { justifyContent: 'flex-start' },
+  label: { whiteSpace: 'normal', overflowWrap: 'anywhere', textAlign: 'left' },
+} as const;
+const NO_WRAP = { whiteSpace: 'nowrap' } as const;
+// The coloured edge that marks a tinted row for a reader who scans the IDs.
+const ROW_EDGE = '3px';
+const TINTED_STATUSES: ReadonlySet<Status> = new Set(['Warning', 'Exceeded']);
+// Kept in view over the rows while the page scrolls, under the field's
+// popover and the drawer. The tint is laid over the page colour to be opaque.
+const STICKY_ALERT_STYLE = {
+  position: 'sticky',
+  top: 0,
+  zIndex: getDefaultZIndex('app'),
+  backgroundColor: 'var(--mantine-color-body)',
+  backgroundImage:
+    'linear-gradient(var(--mantine-color-red-light), var(--mantine-color-red-light))',
+} as const;
 
 export function UsersTable({
   rows,
@@ -60,6 +59,9 @@ export function UsersTable({
   snapshot,
   now,
   onSelect,
+  counts,
+  session,
+  live,
 }: {
   rows: Rows;
   page: UsersPage | null;
@@ -68,149 +70,150 @@ export function UsersTable({
   snapshot: SnapshotState;
   now: number;
   onSelect: (id: string) => void;
+  counts: StatusCounts | undefined;
+  session: Session;
+  live: LiveUsers;
 }) {
-  const shown = pageRows(page, rows);
+  const { rows: shown, ...hold } = useHeldRows(page, rows, query, live.keep);
   const noMatch = snapshot.status === 'loaded' && shown.length === 0;
+  const action = useRowAction(session, live);
+  useFirstPageWhenPastLast(page, query, onQuery);
 
-  // Users can leave a filtered list between two reads, so the page asked
-  // for can end up past the last.
+  return (
+    <Paper withBorder>
+      <TableToolbar query={query} onQuery={onQuery} counts={counts} />
+      <TableMessages snapshot={snapshot} noMatch={noMatch} action={action} />
+      {shown.length > 0 && (
+        <UserRowsTable
+          rows={shown}
+          now={now}
+          onSelect={onSelect}
+          client={session.client}
+          live={live}
+          action={action}
+          bodyProps={hold.bodyProps}
+          onFieldOpened={hold.onFieldOpened}
+        />
+      )}
+      <PageFooter query={query} page={page} onQuery={onQuery} />
+    </Paper>
+  );
+}
+
+/** The held rows; the live session is told which users a hold keeps. */
+function useHeldRows(
+  page: UsersPage | null,
+  rows: Rows,
+  query: UsersQuery,
+  keep: LiveUsers['keep'],
+) {
+  // Every field of the query changes the page asked for, so it keys the hold.
+  const { heldUserIds, ...hold } = useHeldOrder(
+    pageRows(page, rows),
+    rows,
+    JSON.stringify(query),
+  );
+  useEffect(() => keep(heldUserIds), [keep, heldUserIds]);
+  return hold;
+}
+
+// Users can leave a filtered list between two reads, so the page asked for can
+// end up past the last.
+function useFirstPageWhenPastLast(
+  page: UsersPage | null,
+  query: UsersQuery,
+  onQuery: (query: UsersQuery) => void,
+) {
   useEffect(() => {
     if (page && page.page > lastPage(page)) {
       onQuery({ ...query, page: FIRST_PAGE });
     }
   }, [page, query, onQuery]);
+}
 
+/** The table's action, with an error that names the user it was for. */
+function useRowAction(
+  session: Session,
+  live: LiveUsers,
+): RowAction & { message: string; dismiss: () => void } {
+  const { pending, error, setError, run } = useOneAction(session, live);
+  const [userId, setUserId] = useState('');
+  // Whether the error is an invalid entry rather than a failed request.
+  const [entryInvalid, setEntryInvalid] = useState(false);
+  return {
+    pending,
+    message: error && `${userId}: ${error}`,
+    dismiss: () => setError(''),
+    invalidUserId: error && entryInvalid ? userId : '',
+    run: (forUserId, send) => {
+      if (pending) return Promise.resolve(false);
+      setUserId(forUserId);
+      setEntryInvalid(false);
+      return run(send);
+    },
+    invalid: (forUserId, message) => {
+      setUserId(forUserId);
+      setEntryInvalid(true);
+      setError(message);
+    },
+  };
+}
+
+function TableMessages({
+  snapshot,
+  noMatch,
+  action,
+}: {
+  snapshot: SnapshotState;
+  noMatch: boolean;
+  action: { message: string; dismiss: () => void };
+}) {
   return (
     <>
-      <UserFilters query={query} onQuery={onQuery} />
-      <PageControls query={query} page={page} onQuery={onQuery} />
-      {snapshot.status === 'pending' && <Text>Loading users…</Text>}
+      {snapshot.status === 'pending' && (
+        <Text px="md" py="sm">
+          Loading users…
+        </Text>
+      )}
       {snapshot.status === 'error' && (
-        <Alert color="red">
+        <Alert color="red" m="sm">
           Could not load users: {snapshot.error.message}
         </Alert>
       )}
-      {noMatch && <Text>No users match the filters.</Text>}
-      {shown.length > 0 && (
-        <UserRowsTable rows={shown} now={now} onSelect={onSelect} />
+      {action.message && (
+        // Closable: it stays over the first row until another action.
+        <Alert
+          color="red"
+          role="alert"
+          m="sm"
+          style={STICKY_ALERT_STYLE}
+          withCloseButton
+          closeButtonLabel="Dismiss"
+          onClose={action.dismiss}
+        >
+          {action.message}
+        </Alert>
+      )}
+      {noMatch && (
+        <Text px="md" py="sm">
+          No users match the filters.
+        </Text>
       )}
     </>
   );
 }
 
-function UserFilters({
-  query,
-  onQuery,
-}: {
-  query: UsersQuery;
-  onQuery: (query: UsersQuery) => void;
-}) {
-  const firstPageWith = (change: Partial<UsersQuery>) =>
-    onQuery({ ...query, ...change, page: FIRST_PAGE });
-  return (
-    <Group mb="md" align="end">
-      <TextInput
-        label="Search user ID"
-        value={query.search}
-        maxLength={SEARCH_MAX_LENGTH}
-        onChange={(event) =>
-          firstPageWith({ search: event.currentTarget.value })
-        }
-      />
-      <Select
-        label="Status"
-        value={query.status}
-        onChange={(value) =>
-          firstPageWith({ status: chosen(STATUS_OPTIONS, value) })
-        }
-        data={STATUS_OPTIONS}
-        allowDeselect={false}
-      />
-      <Select
-        label="Last active"
-        value={query.active}
-        onChange={(value) =>
-          firstPageWith({ active: chosen(ACTIVE_OPTIONS, value) })
-        }
-        data={ACTIVE_OPTIONS}
-        allowDeselect={false}
-      />
-      <Select
-        label="Users per page"
-        value={String(query.pageSize)}
-        onChange={(value) => firstPageWith({ pageSize: Number(value) })}
-        data={PAGE_SIZE_OPTIONS}
-        allowDeselect={false}
-      />
-    </Group>
-  );
-}
-
-const pageSummary = (page: UsersPage) =>
-  `Page ${page.page} of ${lastPage(page)} · ${page.total} matching users`;
-
-function PageControls({
-  query,
-  page,
-  onQuery,
-}: {
-  query: UsersQuery;
-  page: UsersPage | null;
-  onQuery: (query: UsersQuery) => void;
-}) {
-  // Until the page answers, its last page is unknown: only going back works.
-  const last = page ? lastPage(page) : query.page;
-  const onFirst = query.page === FIRST_PAGE;
-  const onLast = query.page >= last;
-  const goTo = (pageNumber: number) => onQuery({ ...query, page: pageNumber });
-  return (
-    <Group mb="md">
-      <Button
-        variant="default"
-        disabled={onFirst}
-        onClick={() => goTo(FIRST_PAGE)}
-      >
-        First page
-      </Button>
-      <Button
-        variant="default"
-        disabled={onFirst}
-        onClick={() => goTo(query.page - 1)}
-      >
-        Previous page
-      </Button>
-      <Button
-        variant="default"
-        disabled={onLast}
-        onClick={() => goTo(query.page + 1)}
-      >
-        Next page
-      </Button>
-      <Button variant="default" disabled={onLast} onClick={() => goTo(last)}>
-        Last page
-      </Button>
-      {page && (
-        <>
-          <Text>{pageSummary(page)}</Text>
-          <Text size="xs">Updated {utcTime(page.completedAt)}</Text>
-        </>
-      )}
-    </Group>
-  );
-}
-
 function UserRowsTable({
   rows,
-  now,
-  onSelect,
+  bodyProps,
+  ...rowProps
 }: {
   rows: UserRow[];
-  now: number;
-  onSelect: (id: string) => void;
-}) {
+  bodyProps: HeldOrder['bodyProps'];
+} & Omit<UserTableRowProps, 'row'>) {
   return (
-    <Table.ScrollContainer minWidth={640} type="native">
-      <Table>
+    <Table.ScrollContainer minWidth={900} type="native">
+      <Table highlightOnHover verticalSpacing="xs" horizontalSpacing="md">
         <Table.Thead>
           <Table.Tr>
             <Table.Th>User ID</Table.Th>
@@ -218,16 +221,12 @@ function UserRowsTable({
             <Table.Th>Reset Time</Table.Th>
             <Table.Th>Status</Table.Th>
             <Table.Th>Last Request</Table.Th>
+            <Table.Th>Actions</Table.Th>
           </Table.Tr>
         </Table.Thead>
-        <Table.Tbody>
+        <Table.Tbody {...bodyProps}>
           {rows.map((row) => (
-            <UserTableRow
-              key={row.userId}
-              row={row}
-              now={now}
-              onSelect={onSelect}
-            />
+            <UserTableRow key={row.userId} row={row} {...rowProps} />
           ))}
         </Table.Tbody>
       </Table>
@@ -235,41 +234,168 @@ function UserRowsTable({
   );
 }
 
+/** The tint and edge of a Warning or Exceeded row; none for OK. */
+function rowTint(status: Status) {
+  if (!TINTED_STATUSES.has(status)) return { row: undefined, edge: undefined };
+  const color = STATUS_COLOR[status];
+  return {
+    row: `var(--mantine-color-${color}-0)`,
+    edge: `inset ${ROW_EDGE} 0 0 var(--mantine-color-${color}-6)`,
+  };
+}
+
+interface UserTableRowProps {
+  row: UserRow;
+  now: number;
+  onSelect: (id: string) => void;
+  client: Client;
+  live: LiveUsers;
+  action: RowAction;
+  onFieldOpened: HeldOrder['onFieldOpened'];
+}
+
 function UserTableRow({
   row,
   now,
   onSelect,
-}: {
-  row: UserRow;
-  now: number;
-  onSelect: (id: string) => void;
-}) {
-  const suspendedUntil = suspensionEnd(row, now);
+  client,
+  live,
+  action,
+  onFieldOpened,
+}: UserTableRowProps) {
+  const tint = rowTint(row.status);
+  const { idButton, rowAction, open } = useRowFocus(
+    row.userId,
+    onSelect,
+    action,
+  );
   return (
-    <Table.Tr>
-      <Table.Td>
-        {/* A button, so the keyboard can open the details too. */}
-        <Button variant="subtle" px={0} onClick={() => onSelect(row.userId)}>
+    // Anywhere on the row opens the panel; the ID button is its keyboard way.
+    <Table.Tr bg={tint.row} style={{ cursor: 'pointer' }} onClick={open}>
+      <Table.Td style={{ boxShadow: tint.edge }}>
+        {/* Its click reaches the row, which opens the panel. */}
+        <Button
+          ref={idButton}
+          variant="subtle"
+          size="compact-sm"
+          fw={600}
+          px={0}
+          styles={ID_BUTTON_STYLES}
+        >
           {row.userId}
         </Button>
       </Table.Td>
+      <UsageCell row={row} />
+      <UserTableCells row={row} now={now} />
       <Table.Td>
-        {row.remaining} / {row.total}
+        <RowActions
+          row={row}
+          client={client}
+          live={live}
+          action={rowAction}
+          onFieldOpened={(opened) => onFieldOpened(row.userId, opened)}
+        />
       </Table.Td>
-      <Table.Td>
+    </Table.Tr>
+  );
+}
+
+/** The row's ID button, and the opening and action that return focus to it. */
+function useRowFocus(
+  userId: string,
+  onSelect: (id: string) => void,
+  action: RowAction,
+) {
+  const idButton = useRef<HTMLButtonElement>(null);
+  const rowAction = useFocusAfterAction(action, idButton);
+  // The drawer returns focus to what held it on opening: the ID button.
+  const open = () => {
+    // Without scrolling: the row clicked is already in view.
+    idButton.current?.focus({ preventScroll: true });
+    onSelect(userId);
+  };
+  return { idButton, rowAction, open };
+}
+
+// A browser drops focus to the page when the focused button is disabled or
+// removed, which every row action does.
+const focusIsLost = () =>
+  !document.activeElement || document.activeElement === document.body;
+
+/**
+ * The row's action, putting focus back once an action it started settles and
+ * focus was left on the page: on the control pressed if it is still there and
+ * enabled, otherwise on the row's ID button.
+ */
+function useFocusAfterAction(
+  action: RowAction,
+  idButton: RefObject<HTMLButtonElement | null>,
+): RowAction {
+  const pressed = useRef<Element | null>(null);
+  const started = useRef(false);
+  useEffect(() => {
+    if (action.pending || !started.current) return;
+    started.current = false;
+    if (!focusIsLost()) return;
+    const control = pressed.current;
+    if (
+      control instanceof HTMLElement &&
+      control.isConnected &&
+      control.matches(':enabled')
+    ) {
+      control.focus();
+      return;
+    }
+    idButton.current?.focus();
+  }, [action.pending, idButton]);
+  return {
+    ...action,
+    run: (userId, send) => {
+      if (!action.pending) {
+        started.current = true;
+        pressed.current = document.activeElement;
+      }
+      return action.run(userId, send);
+    },
+  };
+}
+
+function UsageCell({ row }: { row: UserRow }) {
+  return (
+    <Table.Td style={NO_WRAP}>
+      <Group gap="sm" wrap="nowrap">
+        <div style={{ width: BAR_WIDTH }}>
+          <UsageBar used={row.used} total={row.total} status={row.status} />
+        </div>
+        <Text span>
+          {row.remaining} / {row.total}
+        </Text>
+      </Group>
+    </Table.Td>
+  );
+}
+
+/** Reset Time, Status and Last Request. */
+function UserTableCells({ row, now }: { row: UserRow; now: number }) {
+  const suspendedUntil = suspensionEnd(row, now);
+  return (
+    <>
+      <Table.Td style={NO_WRAP}>
         {utcTime(row.resetAt)} ({minutesUntil(row.resetAt, now)}m)
       </Table.Td>
       <Table.Td>
-        <Badge color={STATUS_COLOR[row.status]}>{row.status}</Badge>
+        <Badge color={STATUS_COLOR[row.status]} miw="max-content">
+          {row.status}
+        </Badge>
         {suspendedUntil && (
-          <Text size="xs">
+          <Text size="xs" c="dimmed">
             Throttling suspended until {utcTime(suspendedUntil)}
           </Text>
         )}
       </Table.Td>
-      <Table.Td>
+      <Table.Td style={NO_WRAP}>
         {row.lastRequestAt ? utcTime(row.lastRequestAt) : 'Never'}
       </Table.Td>
-    </Table.Tr>
+    </>
   );
 }

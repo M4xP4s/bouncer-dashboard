@@ -1,9 +1,10 @@
 /**
- * Times the user list and the analytics with 1000 and then 10000 registered
- * users, one API process and a steady trickle of sample requests. Each read is
- * ten sequential HTTP requests, timed here from sending to the parsed JSON
- * body: what an admin client waits for, not Redis or admission latency. Prints
- * the median and maximum as JSON. It empties the database of TEST_REDIS_URL
+ * Times the user list (by ID, filtered, and closest to the limit) and the
+ * analytics with 1000 and then 10000 registered users, one API process and a
+ * steady trickle of sample requests. Each read is ten sequential HTTP
+ * requests, timed here from sending to the parsed JSON body: what an admin
+ * client waits for, not Redis or admission latency. Prints the median and
+ * maximum as JSON. It empties the database of TEST_REDIS_URL
  * before and after, so give it a Redis of its own.
  */
 import assert from 'node:assert/strict';
@@ -35,6 +36,7 @@ const ADMIN_TOKEN = 'population-check-admin';
 const READS = {
   page: '/users?page=10',
   filter: '/users?status=OK&search=user',
+  closest: '/users?sort=closest',
   analytics: '/analytics',
 };
 

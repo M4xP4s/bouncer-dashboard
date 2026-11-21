@@ -77,6 +77,7 @@ function usersPath(query: UsersQuery): string {
     search: query.search,
     status: query.status,
     active: query.active,
+    sort: query.sort,
   });
   return `${ADMIN_PATH}/users?${params}`;
 }

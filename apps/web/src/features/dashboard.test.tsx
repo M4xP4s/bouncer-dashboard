@@ -9,11 +9,18 @@ import {
   within,
 } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { RequestRecord, UserDetail, UserRow } from '@app/contracts';
+import type {
+  Analytics,
+  RequestRecord,
+  UserDetail,
+  UserRow,
+} from '@app/contracts';
 import type { LiveUsers } from '../live/useLiveUsers.ts';
 import { NOW, users } from '../fixtures/index.ts';
 import { DEFAULT_USERS_QUERY } from '../api/usersQuery.ts';
 import { deferred, mockClient, pageOf } from '../lib/test-helpers.ts';
+import type { Session } from '../api/useSession.ts';
+import { useRequest } from '../lib/useRequest.ts';
 import { UsersTable } from './table/UsersTable.tsx';
 import { UserDrawer } from './detail/UserDetail.tsx';
 import { mergeRequests } from './detail/mergeRequests.ts';
@@ -43,6 +50,7 @@ function setup() {
     tick: 0,
     applyRow: vi.fn(),
     applyDetailRow: vi.fn(),
+    keep: vi.fn(),
     refresh: vi.fn(),
   };
   // Keyed like the drawer's content: another user gets a fresh form.
@@ -73,6 +81,15 @@ const enter = (label: string, value: string) =>
 const recentRequests = () =>
   within(screen.getByRole('region', { name: 'Recent requests' }));
 
+/** The value a labelled entry of the user stats holds. */
+const statValue = async (label: string) => {
+  const stats = within(
+    await screen.findByRole('region', { name: 'User stats' }),
+  );
+  return stats.getByText(label, { selector: 'dt' }).nextElementSibling
+    ?.textContent;
+};
+
 function requestRecord(changes: Partial<RequestRecord>): RequestRecord {
   return { id: 'x', at: NOW, outcome: 'denied', remaining: 0, ...changes };
 }
@@ -84,6 +101,7 @@ it('keeps rows on snapshot failure, provides keyboard buttons and expires suspen
     suspendedUntil: new Date(now - 1).toISOString(),
   };
   const onSelect = vi.fn();
+  const { session, live } = setup();
   renderInMantine(
     <UsersTable
       rows={new Map([['user-01', suspensionJustExpired]])}
@@ -93,6 +111,9 @@ it('keeps rows on snapshot failure, provides keyboard buttons and expires suspen
       snapshot={{ status: 'error', error: new Error('offline') }}
       now={now}
       onSelect={onSelect}
+      counts={undefined}
+      session={session}
+      live={live}
     />,
   );
 
@@ -134,7 +155,7 @@ it('isolates a history failure from held stats and recent requests and refreshes
   const view = renderInMantine(userDrawer('user-01'));
 
   expect(await screen.findByText(/chart offline/)).toBeTruthy();
-  expect(screen.getByText(/Used 12/)).toBeTruthy();
+  expect(screen.getByText('12 used of 100 · 88 remaining')).toBeTruthy();
   expect(recentRequests().getByText('denied')).toBeTruthy();
 
   view.rerender(userDrawer('user-01', { tick: 1 }));
@@ -154,12 +175,30 @@ it("shows the user's last reset time in the detail panel", async () => {
     userDrawer('user-01', { rows: new Map([['user-01', resetByAdmin]]) }),
   );
 
-  const stats = within(
-    await screen.findByRole('region', { name: 'User stats' }),
-  );
-  expect(
-    stats.getByText('Reset 11:00:00 UTC; last reset 10:17:42 UTC'),
-  ).toBeTruthy();
+  expect(await statValue('Last reset')).toBe('10:17:42 UTC');
+  expect(await statValue('Reset')).toBe('11:00:00 UTC (18m)');
+  expect(await statValue('Suspension')).toBe('Not suspended');
+});
+
+it('the controls stand before the history', async () => {
+  const { client, userDrawer } = setup();
+  client.detail.mockResolvedValue({ row: users[0], recentRequests: [] });
+  client.history.mockResolvedValue([]);
+  renderInMantine(userDrawer('user-01'));
+
+  await screen.findByText('No recent requests.');
+  const inOrder = [
+    screen.getByRole('region', { name: 'User stats' }),
+    ...['Admin actions', 'History', 'Recent requests'].map((name) =>
+      screen.getByRole('heading', { name }),
+    ),
+  ];
+  inOrder.slice(1).forEach((element, index) => {
+    const follows =
+      inOrder[index].compareDocumentPosition(element) &
+      Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(follows).toBeTruthy();
+  });
 });
 
 it('discards an old detail response on a user switch', async () => {
@@ -180,7 +219,7 @@ it('discards an old detail response on a user switch', async () => {
   );
 
   expect(live.applyDetailRow).not.toHaveBeenCalledWith(users[0]);
-  expect(screen.getByText(/Used 50/)).toBeTruthy();
+  expect(screen.getByText('50 used of 100 · 50 remaining')).toBeTruthy();
 });
 
 it('retains a live request during detail refresh and displays later rejections', async () => {
@@ -315,13 +354,34 @@ it('shows analytics values and their definitions', async () => {
     denied429Today: 3,
     day: '2026-11-16',
     topUsers: [{ userId: 'user-06', used: 100, total: 100 }],
+    statusCounts: { OK: 8, Warning: 3, Exceeded: 1 },
   });
 
-  renderInMantine(<AnalyticsCards session={session} tick={0} />);
+  renderInMantine(<LoadedAnalytics session={session} />);
 
   expect(await screen.findByText('50%')).toBeTruthy();
-  expect(screen.getByText(/share at 90%/)).toBeTruthy();
-  expect(screen.getByText(/429 responses today \(UTC\)/)).toBeTruthy();
-  expect(screen.getByText(/By requests this hour/)).toBeTruthy();
-  expect(screen.getByText('user-06: 100 / 100')).toBeTruthy();
+  expect(
+    screen.getByText(
+      'Of users active this hour, the share at 90% or more of their limit, including exceeded users',
+    ),
+  ).toBeTruthy();
+  expect(screen.getByText('All registered users')).toBeTruthy();
+  expect(
+    screen.getByText('429 responses today (UTC), 2026-11-16'),
+  ).toBeTruthy();
+  expect(screen.getByText('By requests this hour')).toBeTruthy();
+  const topUser = within(screen.getByRole('listitem'));
+  expect(topUser.getByText('user-06')).toBeTruthy();
+  expect(topUser.getByText('100 / 100')).toBeTruthy();
+  expect(screen.getAllByText('Updated 10:42:00 UTC')).toHaveLength(1);
 });
+
+/** Loads analytics as the dashboard does, and shows the cards. */
+function LoadedAnalytics({ session }: { session: Session }) {
+  const analytics = useRequest<Analytics>(
+    'analytics',
+    (signal) => session.client.analytics(signal),
+    0,
+  );
+  return <AnalyticsCards analytics={analytics} />;
+}

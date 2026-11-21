@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { users } from '../fixtures/index.ts';
+import { analytics, users } from '../fixtures/index.ts';
 import { deferred, pageOf } from '../lib/test-helpers.ts';
 import { createClient, type Client, type ClientOptions } from './client.ts';
 import { DEFAULT_USERS_QUERY } from './usersQuery.ts';
@@ -251,10 +251,11 @@ const routes: Record<string, RouteCase> = {
         search: 'a&b c',
         status: 'Warning',
         active: '1h',
+        sort: 'id',
       }),
     responseBody: pageOf([], { page: 2, pageSize: 25 }),
     method: 'GET',
-    path: '/api/admin/users?page=2&pageSize=25&search=a%26b+c&status=Warning&active=1h',
+    path: '/api/admin/users?page=2&pageSize=25&search=a%26b+c&status=Warning&active=1h&sort=id',
     sentBody: undefined,
   },
   history: {
@@ -306,3 +307,34 @@ it.each(Object.entries(routes))(
     expect(options?.body).toBe(sentBody);
   },
 );
+
+it('asks for the closest-to-limit order by default', async () => {
+  fetchMock.mockResolvedValue(response(pageOf(users)));
+
+  await adminClient().users(DEFAULT_USERS_QUERY);
+
+  expect(fetchMock.mock.calls[0][0]).toBe(
+    '/api/admin/users?page=1&pageSize=50&search=&status=any&active=any&sort=closest',
+  );
+});
+
+it('accepts the analytics read with its status counts', async () => {
+  fetchMock.mockResolvedValue(response(analytics));
+
+  await expect(adminClient().analytics()).resolves.toEqual(analytics);
+});
+
+it.each([
+  ['no status counts', { ...analytics, statusCounts: undefined }],
+  [
+    'a negative count',
+    { ...analytics, statusCounts: { OK: -1, Warning: 4, Exceeded: 3 } },
+  ],
+  ['a missing status', { ...analytics, statusCounts: { OK: 5, Warning: 4 } }],
+])('rejects an analytics read with %s', async (_problem, body) => {
+  fetchMock.mockResolvedValue(response(body));
+
+  await expect(adminClient().analytics()).rejects.toMatchObject({
+    message: 'The server returned an invalid response.',
+  });
+});

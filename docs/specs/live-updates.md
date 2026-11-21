@@ -40,8 +40,9 @@ expectations.
    held row of its user only if newer: a later `resetAt`, then a higher
    `version`. Arrival order and repeats therefore change nothing ([P19]). An
    equal row that differs is replaced only by a snapshot (rule 8) and by the
-   detail response of the user selected when it arrives, while that user is not
-   on the page on screen. The order decides the row and its request record only:
+   detail response of a user whose row is held (rule 13) when it arrives, while
+   that user is not on the page on screen. The order decides the row and its
+   request record only:
    every `rate:limit_exceeded` received shows its alert, whatever row is held.
    (Core feature 1; Expectation: reliability)
 8. An event never causes a request. A snapshot (the page of the user list on
@@ -65,11 +66,14 @@ expectations.
     and never fails a request or ends the process; after a Redis outage,
     relaying resumes without a restart. (Expectation: scalability; Expectation:
     reliability)
-13. The dashboard holds the rows of the page on screen and of the selected user
-    only, and the requests events carry only for the selected user, the
-    newest 100. An event for anyone else is checked and may alert, but nothing
-    of it is kept. Every dashboard still receives every event (rule 5): this
-    bounds memory, not traffic. (Expectation: scalability; [P9])
+13. The dashboard holds the rows of the page on screen, of the selected user
+    and of the users the table holds in place
+    ([dashboard rule 6](dashboard.md#behavior)), at most the page they were
+    held from, and no others; it holds the requests events carry only for the
+    selected user, the newest 100. An event for anyone else is checked and may
+    alert, but nothing of it is kept. Every dashboard still receives every
+    event (rule 5): this bounds memory, not traffic. (Expectation:
+    scalability; [P9])
 14. A new page or filter keeps the socket, cancels the page read in flight and
     at once drops every row except the selected user's, because the new page is
     not known yet; a response for an older page or filter is dropped ([P22]).
@@ -86,7 +90,7 @@ flowchart LR
     W -- "same" --> V{"version"}
     V -- "higher" --> T
     V -- "lower" --> K
-    V -- "equal" --> S{"Snapshot, or detail of the<br/>selected user off the page,<br/>and the row differs?"}
+    V -- "equal" --> S{"Snapshot, or detail of a<br/>held user off the page,<br/>and the row differs?"}
     S -- "yes" --> T
     S -- "no" --> K
 ```
@@ -148,15 +152,17 @@ match, stays until the next successful snapshot; a user past the 100 kept during
 a page read shows the page's row until their next event or snapshot, since
 reading again would let events cause reads. Cases: browser tests.
 
-### The selected user's detail repairs it off the page
+### A held user's detail repairs it off the page
 
 With pages, the selected user may be on no page the dashboard reads, so no
 snapshot would repair an ended suspension or a removed rejected entry for that
 user. The detail reloads on every refresh and is read with its version in one
 transaction, like a snapshot, so it may replace an equal row for that user while
-the user is off the page. Alternative: render the detail panel from the detail
-response alone, which splits one user's state in two places. Cost: one more case
-in the ordering rule.
+the user is off the page. The same holds for a user the table holds in place
+after the page dropped them, whose detail is read while a field of the row is
+open ([dashboard rule 9](dashboard.md#behavior)). Alternative: render the
+detail panel from the detail response alone, which splits one user's state in
+two places. Cost: one more case in the ordering rule.
 
 ### Every dashboard receives every event
 
@@ -197,7 +203,9 @@ Mocked store and browser: `npm test`. Real store: as
 - Browser, under `apps/web/src/`: `live/rows.test.ts` and
   `live/useLiveUsers.test.tsx` (ordering, snapshot repair and triggers, one
   follow-up, alert despite a held version, own listeners removed, new page,
-  events during a read, the 100 cap, off-page events, detail repair),
+  events during a read, the 100 cap, off-page events, detail repair, users
+  held in place: their events off the page, their detail repair, dropped when
+  let go or on a new page),
   `features/dashboard.test.tsx` (refresh after a failed action, detail reload on
   tick), `App.test.tsx` and `assembled.test.tsx` (update time, own listeners).
 - Real store, `apps/api/test/`: `live-events` (exact row at a socket), `alerts`

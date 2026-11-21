@@ -162,33 +162,86 @@ const userIds = (rows: UserRow[]) => rows.map((row) => row.userId);
 const matchingIds = (changes: Partial<typeof DEFAULT_USERS_QUERY>) =>
   userIds(usersPage(users, { ...DEFAULT_USERS_QUERY, ...changes }, now).rows);
 
-it('filters by plain user ID, server status and recent activity', () => {
+it('filters by server status and recent activity, closest to the limit first', () => {
   expect(
     matchingIds({ search: 'USER-04', status: 'Warning', active: '5m' }),
   ).toEqual(['user-04']);
   expect(matchingIds({ status: 'OK' })).toEqual([
-    'user-01',
-    'user-02',
     'user-03',
+    'user-02',
+    'user-01',
     'user-10',
     'user-12',
   ]);
   expect(matchingIds({ status: 'Exceeded' })).toEqual([
-    'user-06',
-    'user-09',
     'user-11',
+    'user-09',
+    'user-06',
   ]);
   expect(matchingIds({ active: '5m' })).toEqual([
-    'user-01',
-    'user-02',
-    'user-03',
-    'user-04',
-    'user-05',
-    'user-06',
-    'user-07',
-    'user-08',
     'user-09',
+    'user-06',
+    'user-05',
+    'user-08',
+    'user-04',
+    'user-07',
+    'user-03',
+    'user-02',
+    'user-01',
   ]);
+});
+
+it('lists the closest to the limit first and ties by user ID by default', () => {
+  expect(matchingIds({})).toEqual([
+    'user-11',
+    'user-09',
+    'user-06',
+    'user-05',
+    'user-08',
+    'user-04',
+    'user-07',
+    'user-03',
+    'user-02',
+    'user-01',
+    'user-10',
+    'user-12',
+  ]);
+  expect(matchingIds({ status: 'Warning' })).toEqual([
+    'user-05',
+    'user-08',
+    'user-04',
+    'user-07',
+  ]);
+});
+
+it('lists every user by ID under sort id', () => {
+  expect(matchingIds({ sort: 'id' })).toEqual(
+    Array.from(
+      { length: 12 },
+      (_, index) => `user-${String(index + 1).padStart(2, '0')}`,
+    ),
+  );
+});
+
+it('compares shares by cross-multiplying, not by a rounded ratio', () => {
+  const share = (userId: string, used: number, total: number): UserRow => ({
+    ...users[0],
+    userId,
+    used,
+    limit: total,
+    total,
+  });
+  // 1 of 3 equals 33 of 99; 30 of 10 precedes 130 of 100.
+  const rows = [
+    share('d', 33, 99),
+    share('c', 130, 100),
+    share('b', 1, 3),
+    share('a', 30, 10),
+  ];
+
+  const page = usersPage(rows, DEFAULT_USERS_QUERY, now);
+
+  expect(userIds(page.rows)).toEqual(['a', 'c', 'b', 'd']);
 });
 
 it('orders user IDs by plain strings regardless of locale collation', () => {
@@ -214,6 +267,6 @@ it('the fixture client filters every row before it cuts the page', async () => {
   await vi.advanceTimersByTimeAsync(150);
 
   const page = await read;
-  expect(userIds(page.rows)).toEqual(['user-03', 'user-04']);
+  expect(userIds(page.rows)).toEqual(['user-05', 'user-08']);
   expect(page).toMatchObject({ total: 9, page: 2, pageSize: 2 });
 });

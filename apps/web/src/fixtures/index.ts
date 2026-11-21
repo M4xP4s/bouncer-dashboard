@@ -343,6 +343,9 @@ export const analytics: Analytics = {
     { userId: 'user-05', used: 99, total: 100 },
     { userId: 'user-04', used: 90, total: 100 },
   ],
+  // user-01 to 03, 10 and 12 are OK; 04, 05, 07 and 08 are Warning; 06, 09
+  // and 11 are Exceeded.
+  statusCounts: { OK: 5, Warning: 4, Exceeded: 3 },
 };
 
 /** `rate:update` after user-01's next admitted request. */

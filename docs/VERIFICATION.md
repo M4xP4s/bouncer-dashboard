@@ -16,12 +16,21 @@ results only. A check that is not listed here was not run.
 | Redis        | 8.10.3 (`redis:8-alpine`), one instance in Docker, used by nothing else during the runs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Browser      | Chromium 151.0.7922.34 driven by Playwright, headless, 1440 by 900 pixels                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
+Runs made on the branch `dashboard-triage` name the tree they ran on, as
+`git rev-parse HEAD^{tree}` printed it. The commits of that branch were
+combined into three before its review, so each of those trees is a state of
+the work as it went and not a commit of this repository.
+
 ## Automated checks
 
 Commands as in the [README](../README.md#verification), from a fresh checkout
 after `npm ci`, run one after another on a Redis server of their own. That
 server listened on another free port than the README's 6380; nothing else
-differed.
+differed. Seven of these commands were repeated on 2026-11-18 after the
+closest-first order was added; their newer results are under
+[Closest-first order and row actions](#closest-first-order-and-row-actions),
+and the table below keeps the full run. Six were run again on 2026-11-19 for
+the change under [Held rows](#held-rows).
 
 | Command                            | What it runs                                                                                                                                                                                           | Result                                                                                                                                                                                                                 |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -99,30 +108,38 @@ count stayed 0 and the start time stayed the same for both.
 
 ### Reads by number of users
 
-`npm run check:population`, three runs. Each figure is taken over ten
-sequential requests to one admin route, timed in the script from sending the
-request to the parsed JSON body, while one sample request every 50 ms goes to
-the same API. It is the time an admin client waits on one machine, not
-admission latency and not a load test. "Page" is `GET /api/admin/users?page=10`,
-"filter" is `?status=OK&search=user`, which matches every user and so reads
-them all, and "analytics" is `GET /api/admin/analytics`. "Seed" is the time
-to register users 1 to N in the script's own process; at 10000 it finds the
-first 1000 present and adds 9000. "Redis memory" is `used_memory` of the whole
-test server after the reads, the server's own baseline included.
+`npm run check:population`, three runs on 2026-11-18 at tree `5e7ea13`,
+with the page ordered closest to the limit beside the others. Each figure is taken over
+ten sequential requests to one admin route, timed in the script from sending
+the request to the parsed JSON body, while one sample request every 50 ms goes
+to the same API. It is the time an admin client waits on one machine, not
+admission latency and not a load test. "Page" is
+`GET /api/admin/users?page=10`, "filter" is `?status=OK&search=user`, which
+matches every user and so reads them all, "closest" is `?sort=closest`, the
+order the dashboard asks for by default, and "analytics" is
+`GET /api/admin/analytics`. "Seed" is the time to register users 1 to N in the
+script's own process; at 10000 it finds the first 1000 present and adds 9000.
+"Redis memory" is `used_memory` of the whole test server after the reads, the
+server's own baseline included.
 
-| Run | Users | Seed     | Page, median / max | Filter, median / max | Analytics, median / max | Redis memory | Sample requests, all admitted |
-| --- | ----- | -------- | ------------------ | -------------------- | ----------------------- | ------------ | ----------------------------- |
-| 1   | 1000  | 52.4 ms  | 4.5 / 9.4 ms       | 25.7 / 138.1 ms      | 23.1 / 142.4 ms         | 2,746,960 B  | 13                            |
-| 1   | 10000 | 319.1 ms | 2.9 / 4.1 ms       | 136.0 / 277.6 ms     | 128.2 / 139.3 ms        | 5,530,912 B  | 52                            |
-| 2   | 1000  | 52.5 ms  | 3.8 / 7.6 ms       | 18.6 / 41.9 ms       | 16.8 / 24.1 ms          | 2,747,592 B  | 8                             |
-| 2   | 10000 | 243.7 ms | 3.2 / 3.5 ms       | 129.6 / 315.6 ms     | 132.3 / 214.9 ms        | 5,538,744 B  | 54                            |
-| 3   | 1000  | 54.0 ms  | 3.8 / 6.0 ms       | 18.1 / 24.2 ms       | 17.7 / 33.8 ms          | 2,745,128 B  | 8                             |
-| 3   | 10000 | 358.4 ms | 2.7 / 3.3 ms       | 125.1 / 202.4 ms     | 124.6 / 147.7 ms        | 5,528,728 B  | 48                            |
+| Run | Users | Seed     | Page, median / max | Filter, median / max | Closest, median / max | Analytics, median / max | Redis memory | Sample requests, all admitted |
+| --- | ----- | -------- | ------------------ | -------------------- | --------------------- | ----------------------- | ------------ | ----------------------------- |
+| 1   | 1000  | 48.5 ms  | 3.5 / 7.9 ms       | 17.4 / 19.8 ms       | 15.7 / 25.2 ms        | 14.4 / 15.1 ms          | 2,847,048 B  | 10                            |
+| 1   | 10000 | 214.8 ms | 2.9 / 3.0 ms       | 143.4 / 190.4 ms     | 125.2 / 131.5 ms      | 130.8 / 213.2 ms        | 5,639,848 B  | 78                            |
+| 2   | 1000  | 46.1 ms  | 3.4 / 6.6 ms       | 16.8 / 23.9 ms       | 15.6 / 20.2 ms        | 17.3 / 21.7 ms          | 2,844,112 B  | 11                            |
+| 2   | 10000 | 230.9 ms | 3.7 / 3.8 ms       | 130.0 / 214.4 ms     | 131.4 / 181.4 ms      | 150.0 / 223.9 ms        | 5,639,392 B  | 83                            |
+| 3   | 1000  | 42.9 ms  | 3.4 / 6.3 ms       | 14.6 / 18.7 ms       | 14.8 / 15.1 ms        | 13.7 / 19.0 ms          | 2,842,656 B  | 9                             |
+| 3   | 10000 | 196.0 ms | 2.6 / 3.0 ms       | 129.8 / 136.9 ms     | 133.8 / 170.2 ms      | 166.0 / 196.0 ms        | 5,638,776 B  | 79                            |
 
-An unfiltered page reads only its own rows and does not grow with the number
-of users; a filtered page and the analytics read every registered user and
-took about seven times as long at ten times the users. The medians are
-charted in the [README](../README.md#verification).
+An unfiltered page in ID order reads only its own rows and does not grow with
+the number of users. A filtered page, a page ordered closest to the limit and
+the analytics read every registered user and took eight to twelve times as
+long at ten times the users. The first page in closest-first order, which
+keeps 50 rows between batches, took what a filtered page took; a page far
+down, which keeps more, was not timed. The medians are charted in the
+[README](../README.md#verification). The dashboard asks for the closest-first
+page and the analytics on every snapshot, every 10 seconds per open
+dashboard: two reads of 125 to 166 ms each at 10000 users.
 
 ## In a browser
 
@@ -164,6 +181,123 @@ The other run modes of the [README](../README.md#run-it):
 | Dashboard alone | `VITE_FIXTURES=1 npm run dev -w apps/web` with nothing on port 3000                                                                            | The token form, which any token passes; then 12 fixture rows at OK, Warning and Exceeded, the cards and "LIVE"; no request to `/api` or `/socket.io` left the browser | Pass                     |
 | One origin      | Not run by hand                                                                                                                                | The integration file `one-origin.e2e-spec.ts` serves the built page, the API and the socket from one process                                                          | Not checked in a browser |
 
+## Closest-first order and row actions
+
+Run on 2026-11-18 on the machine of
+[Revision and environment](#revision-and-environment), at tree `5e7ea13` of
+the branch `dashboard-triage`, which holds the fixes of that branch's review,
+on a Redis server of its own at port 6380. The commands and the browser
+passes ran one after another, never together: the Socket.IO adapter's
+channels are not separated by Redis database number, so a dashboard open
+while the integration suite uses the same server shows that suite's events.
+That was seen once, and that pass was thrown away and repeated.
+
+| Command                     | Result                                                                                                         |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `npm run build`             | Exit 0, with Vite's notice about the size of the dashboard's JavaScript file as before                         |
+| `npm run lint`              | Exit 0, nothing reported                                                                                       |
+| `npm test`                  | Exit 0. API: 306 tests in 17 files passed. Dashboard: 174 tests in 15 files passed                             |
+| `npm run check:contracts`   | Exit 0, `fixtures consistent: 138 checks passed`                                                               |
+| `npm run test:integration`  | Five runs in a row, each exit 0: 84 tests in 14 files passed, in 30 to 31 s                                    |
+| `npm run check:two-process` | Three runs, each exit 0 in 3 to 4 s, printing the five lines shown under [Automated checks](#automated-checks) |
+| `npm run check:population`  | Three runs, each exit 0; figures under [Reads by number of users](#reads-by-number-of-users)                   |
+
+Not repeated: `docker compose up --build --wait` and the 14 browser items of
+[In a browser](#in-a-browser). Those items describe the page before this
+change: its "First" and "Last" paging buttons no longer exist, and the admin
+actions of item 13 now stand above the history.
+
+In Chromium at 1440 by 900 pixels, the built application
+(`node apps/api/dist/main.js`, which also serves the built dashboard: the
+"One origin" mode) on port 3040. Items 1 to 9 had 1000 users from
+`npm run seed:users -- --count 1000` and the bursts of
+`node scripts/traffic.mjs http://127.0.0.1:3040`, stopped before the pass so
+that the figures stand still. Items 10 to 15 had a fresh store with the 12
+demo users and one more whose ID has 64 characters, and sent requests between
+the steps so that one user passed another. Each observation was compared with
+the admin API's answer where one exists.
+
+| #   | Done                                                                                                                                                      | Observed                                                                                                                                                                                                                                                           | Result |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
+| 1   | Signed in and read the table                                                                                                                              | "Page 1 of 20 · 1000 matching users" and 50 rows; the first five users are user-06 (Exceeded, 0 / 100), user-05 (Warning, 8 / 100), user-04, user-03 and user-02, the order `GET /api/admin/users?sort=closest` returns                                            | Pass   |
+| 2   | Read the Status choice                                                                                                                                    | "All 1000", "Exceeded 1", "Warning 1", "OK 998", as `statusCounts` of the analytics                                                                                                                                                                                | Pass   |
+| 3   | Counted the rows with controls                                                                                                                            | Two: the Exceeded and the Warning row, each with "Add extra" and "Reset usage"                                                                                                                                                                                     | Pass   |
+| 4   | "Next page", "Previous page", a search for `user-777`, the Status choice "Exceeded", "Users per page" 100                                                 | "Page 2 of 20 · 1000 matching users"; one row, user-777; one row, user-06; "Page 1 of 10 · 1000 matching users"                                                                                                                                                    | Pass   |
+| 5   | "Add extra to user-06", then "Add extra" in the field                                                                                                     | The field "Extra requests" opened holding 50 with the focus in it. Afterwards the API reports total 150, remaining 50 and status OK, the row reads 50 / 150 and OK, has lost its controls and is still first; in the next pass, after a page read, it stood second | Pass   |
+| 6   | Opened user-05                                                                                                                                            | The headings "Admin actions", "History" and "Recent requests" in that order; Escape closed the panel and returned focus to "user-05"                                                                                                                               | Pass   |
+| 7   | With the table header scrolled out of view, paused Redis and pressed Enter on "Reset usage of user-05"                                                    | "user-05: The rate limit store did not answer." at the top of the window (0 to 56 px) while the header was 56 px above it; after the unpause the focus was on "Reset usage of user-05" again                                                                       | Pass   |
+| 8   | Pressed Enter on "Reset usage of user-05" once more                                                                                                       | The row reads 100 / 100 and OK, the error is gone, and the focus is on the row's "user-05" button, as its controls no longer exist                                                                                                                                 | Pass   |
+| 9   | Read the browser console over the passes                                                                                                                  | Empty, apart from the three 503s of the deliberate pause                                                                                                                                                                                                           | Pass   |
+| 10  | By mouse only: opened user-03 by a click on its row, closed the panel with its close button, moved the pointer off the table; user-03 then passed user-02 | The focus was on "user-03" and was not keyboard focus (`:focus-visible` false); after the next page read the table showed user-03 first, as the API did                                                                                                            | Pass   |
+| 11  | Rested the pointer on the first row while user-02 passed user-03                                                                                          | After the page read the API listed user-02 first; the table kept user-03 first and showed user-02's new values, 15 / 100; when the pointer left the table, user-02 stood first at once                                                                             | Pass   |
+| 12  | Moved focus with Tab from the search field to the first row's ID while the third user passed both                                                         | Keyboard focus on "user-02"; after the page read the table kept its order; a second Tab, to the next row's ID, kept it too; a click on the page heading showed the API's order at once                                                                             | Pass   |
+| 13  | Typed a search while the pointer rested on a row                                                                                                          | The rows of the new search in the API's order for it                                                                                                                                                                                                               | Pass   |
+| 14  | Read the row and the Top users line of the user with the 64-character ID                                                                                  | In the table the ID wraps over three lines, the row is 65 px high beside 46 px, the counts and both times stay on one line and the badge reads "WARNING" in full; in Top users the ID stands in full over eight lines beside its bar and "95 / 100"                | Pass   |
+| 15  | Entered 0 in that row's "Extra requests", then pressed "Dismiss"                                                                                          | "…: Enter an integer from 1 to 10000." with the user's ID as the table's error; gone after "Dismiss"                                                                                                                                                               | Pass   |
+
+The dashboard alone (`VITE_FIXTURES=1`, port 5199), by the agents that wrote
+the views. At tree `578e5ea`, before the review fixes: milestone steps 1 to
+3 of the [dashboard specification](specs/dashboard.md#milestone) were seen as
+written, and the measured contrast of every text and its background on the
+new elements, the tinted rows and the outcome badges included, was at least
+5.69 to 1; the fixes changed none of those colours. During the fixes: a row
+hovered for 12 s, past a snapshot, kept the order, and an open "Extra
+requests" field was still open after one.
+
+Not checked for this change: any browser other than Chromium, where what
+counts as keyboard focus and whether a removed element sends a blur may
+differ; a touch screen or a pen; the page at a width below 1440 pixels; the
+held order while focus moves between two controls, for a moment without
+focus; a hold whose row leaves the page from under a resting pointer; the
+held order with 1000 users under steady traffic; a closest-first page far
+down the list, whose read keeps more rows; the dashboard at 10000 users,
+where only the read times above were taken; and the Compose image.
+
+## Held rows
+
+Run on 2026-11-19 on the machine of
+[Revision and environment](#revision-and-environment), at tree `7597ca3` of
+the branch `dashboard-triage`: a hold keeps the users and places it began
+with, and the row whose "Extra requests" field is open reads its user again.
+The change is in the dashboard only; the API is as it was at tree `5e7ea13`. The directories `apps`, `packages` and
+`scripts` of tree `7597ca3` are those of the commit that carries the change.
+
+| Command                     | Result                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------- |
+| `npm run build`             | Exit 0                                                                             |
+| `npm run lint`              | Exit 0, nothing reported                                                           |
+| `npm test`                  | Exit 0. API: 306 tests in 17 files passed. Dashboard: 182 tests in 15 files passed |
+| `npm run check:contracts`   | Exit 0, `fixtures consistent: 138 checks passed`                                   |
+| `npm run test:integration`  | One run, exit 0: 84 tests in 14 files passed, in 32 s                              |
+| `npm run check:two-process` | One run, exit 0, `200=100 429=100 other=0` among its five lines                    |
+
+In a browser, by a second agent that did not write the change: desktop Chrome
+157.0.8103.79, the built application from a clean export of that tree, each
+run with an API and a Redis container of its own, the table filtered to
+Warning. A, B, C and D are four users; each observation was compared with the
+admin API's answer.
+
+| #   | Done                                                                                                                                                               | Observed                                                                                                                                                                                                                                        | Result |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| 1   | Rested the pointer on "Reset usage" of B, the second row; A, the first, was reset elsewhere and left the page at the next read; clicked without moving the pointer | The table kept A, now OK, above B; the element at the pointer's coordinates was still B's "Reset usage"; the click sent `POST /api/admin/users/user-B/reset`; the API then reported B at 0 used and C still at 94; A went when the pointer left | Pass   |
+| 2   | Opened "Add extra" of B and typed 17 without sending; B reached 100 used and left the page; another admin call granted B 50                                        | The field stayed open with 17 in it; the row beside it read 50 / 150 and OK                                                                                                                                                                     | Pass   |
+| 3   | As 2, but the grant was made while the browser's connection to the application was cut                                                                             | "Disconnected" and 0 / 100 during the cut; once restored the browser read B's detail, showed "Live" and 50 / 150, OK, with 17 still typed, 0.35 s after the connection returned in this run                                                     | Pass   |
+| 4   | With the pointer resting on B, D entered the server's page                                                                                                         | D was not listed through that read and the next; when the pointer left the table the rows were those of the last page read, C and D                                                                                                             | Pass   |
+
+Before the change, at tree `365117b`, the same agent had seen the faults in
+the same browser: in item 1 the click sent the reset of C, and in item 2 the
+row beside the open field read 0 / 100 while a fresh tab read 50 / 150.
+
+Not checked for this change: `npm run check:population`, the integration suite
+and the two-process check more than once, the 15 browser items of
+[Closest-first order and row actions](#closest-first-order-and-row-actions),
+any browser other than Chrome, a touch screen or a pen, a hold with more than
+four users or under steady traffic, a hold across a new hour, and a failed
+detail read for an open field. In the screenshots of item 1 the columns
+stand a few pixels further right once A's values have changed, as the table
+sizes its columns by their content; the button stayed under the pointer, and
+no check bounds that movement.
+
 ## Requirements
 
 Each item of [the requirements](REQUIREMENTS.md) and where it is shown. "T"
@@ -192,7 +326,7 @@ Files are named without their directory: `*.spec.ts` under `apps/api/src`, `*.e2
 | Submission: `package.json` with dependencies and scripts                       | `npm ci`, `npm run build`, `npm run lint`, `npm test` from a fresh checkout                                                                                                               |                                                                                     |
 | Submission: a ZIP file or a link to a GitHub repository                        | This repository                                                                                                                                                                           | Sending it is the owner's step and is not claimed here                              |
 | Submission: commented code and good practices                                  | [Coding rules](CODING-RULES.md), enforced in part by lint                                                                                                                                 | A judgement for the reviewer; no test shows it                                      |
-| Expectation: every significant decision backed by reasoning and trade-offs     | [Decisions](../README.md#decisions) in the README, which links the 25 decisions of the five specifications, each with its alternatives and cost                                           | Whether the reasoning convinces is the reviewer's judgement                         |
+| Expectation: every significant decision backed by reasoning and trade-offs     | [Decisions](../README.md#decisions) in the README, which links the 26 decisions of the five specifications, each with its alternatives and cost                                           | Whether the reasoning convinces is the reviewer's judgement                         |
 | Expectation: engineering thought process                                       | The specification-first trail: a specification commit before the code in each pull request, the test plans, the review fixes in the history, and this record                              | A judgement for the reviewer                                                        |
 | Expectation: architecture                                                      | The decisions of the five specifications; the build; I; 2P                                                                                                                                |                                                                                     |
 | Expectation: scalability                                                       | 2P; P; `registry.e2e-spec.ts` (I)                                                                                                                                                         | Two processes and 10000 users on one machine; filters and analytics read every user |

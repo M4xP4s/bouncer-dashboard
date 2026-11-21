@@ -36,9 +36,7 @@ export class UserReads {
   /** `now` is when the read starts; every row is built for that moment. */
   async page(query: UsersQuery, now: number): Promise<UsersPage> {
     const offset = (query.page - 1) * query.pageSize;
-    const { rows, total } = isUnfiltered(query)
-      ? await this.unfilteredPage(offset, query.pageSize, now)
-      : await this.filteredPage(query, offset, now);
+    const { rows, total } = await this.pageOf(query, offset, now);
     const interval = readInterval(now);
     return {
       rows,
@@ -58,6 +56,18 @@ export class UserReads {
     const summary = tally.summary(denied429Today, now);
     const interval = readInterval(now);
     return { ...summary, ...interval };
+  }
+
+  private pageOf(
+    query: UsersQuery,
+    offset: number,
+    now: number,
+  ): Promise<Matches> {
+    if (query.sort === 'closest') return this.closestPage(query, offset, now);
+    if (isUnfiltered(query)) {
+      return this.unfilteredPage(offset, query.pageSize, now);
+    }
+    return this.filteredPage(query, offset, now);
   }
 
   /** Reads only the IDs and rows of the page. */
@@ -90,6 +100,47 @@ export class UserReads {
     }
     return { rows, total };
   }
+
+  /**
+   * Keeps only the closest rows down to the end of the page after each batch,
+   * so the memory and the work between two reads grow with the page's depth
+   * and the batch, not with the population.
+   */
+  private async closestPage(
+    query: UsersQuery,
+    offset: number,
+    now: number,
+  ): Promise<Matches> {
+    const matches = rowFilter(query, now);
+    const depth = offset + query.pageSize;
+    let kept: UserRow[] = [];
+    let total = 0;
+    for await (const userIds of this.registry.batches()) {
+      const batch = (await this.store.snapshot(userIds, now)).filter(matches);
+      total += batch.length;
+      kept = closestOf(kept, batch, depth);
+    }
+    return { rows: kept.slice(offset), total };
+  }
+}
+
+/** The `depth` rows closest to their limit among `kept` and `batch`, in order. */
+export function closestOf(
+  kept: readonly UserRow[],
+  batch: readonly UserRow[],
+  depth: number,
+): UserRow[] {
+  return [...kept, ...batch].sort(closerToLimit).slice(0, depth);
+}
+
+/**
+ * Negative when `a` comes first: the larger share of its cap used, equal
+ * shares by user ID. Cross-multiplied whole numbers, so 1 of 3 equals 33 of 99.
+ */
+export function closerToLimit(a: UserRow, b: UserRow): number {
+  const byShare = b.used * a.total - a.used * b.total;
+  if (byShare !== 0) return byShare;
+  return a.userId < b.userId ? -1 : 1;
 }
 
 function isUnfiltered({ search, status, active }: UsersQuery): boolean {
